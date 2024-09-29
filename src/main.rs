@@ -15,12 +15,16 @@ struct Args {
 
     #[arg(short, long)]
     custom_header: Option<String>,
+
+    #[arg(short, long, default_value = "3")]
+    zstd_level: i32,
 }
 
 fn handle_connection(
     mut client: TcpStream,
     forward_addr: &str,
     custom_header: Option<String>,
+    zstd_level: i32,
 ) -> io::Result<()> {
     let mut server = TcpStream::connect(forward_addr)?;
 
@@ -64,7 +68,7 @@ fn handle_connection(
 
     // Forward body with optional compression
     if supports_zstd {
-        let mut encoder = ZstdEncoder::new(Vec::new(), 3)?;
+        let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level)?;
         if chunked {
             forward_chunked_body(&mut server, &mut encoder)?;
         } else if let Some(length) = content_length {
@@ -217,7 +221,7 @@ fn main() -> io::Result<()> {
         let forward_addr = args.forward_addr.clone();
         let custom_header = args.custom_header.clone();
         thread::spawn(move || {
-            if let Err(e) = handle_connection(stream, &forward_addr, custom_header) {
+            if let Err(e) = handle_connection(stream, &forward_addr, custom_header, args.zstd_level) {
                 eprintln!("Error handling connection: {}", e);
             }
         });
