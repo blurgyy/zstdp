@@ -17,7 +17,6 @@
         self.overlays.default
       ];
     };
-    inherit (nixpkgs) lib;
   in {
     packages = rec {
       inherit (pkgs) zstdp;
@@ -29,6 +28,9 @@
     in {
       zstdp = final.callPackage ./. { inherit version; };
     };
+
+    nixosModules.default = import ./nixos-module.nix;
+
     hydraJobs = self.packages;
   };
 }
