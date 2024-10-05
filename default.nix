@@ -9,6 +9,6 @@ rustPlatform.buildRustPackage {
   meta = {
     description = "Zstd proxy";
     homepage = "https://github.com/blurgyy/zstdp";
-    license = lib.licenses.mit;
+    license = lib.licenses.asl20;
   };
 }
