@@ -119,10 +119,12 @@ fn forward_request(
         !line.trim().is_empty()
     } {
         request.extend_from_slice(line.as_bytes());
-        if line.to_lowercase().starts_with("accept-encoding:") && line.to_lowercase().contains("zstd") {
+        if line.to_lowercase().starts_with("accept-encoding:")
+            && line.to_lowercase().contains("zstd")
+        {
             supports_zstd = true;
         }
-        if !line.starts_with("Host:") {
+        if !line.to_lowercase().starts_with("host:") {
             let parts: Vec<&str> = line.splitn(2, ':').collect();
             if parts.len() == 2 {
                 headers.push((parts[0].trim().to_string(), parts[1].trim().to_string()));
@@ -221,7 +223,8 @@ fn main() -> io::Result<()> {
         let forward_addr = args.forward_addr.clone();
         let custom_header = args.custom_header.clone();
         thread::spawn(move || {
-            if let Err(e) = handle_connection(stream, &forward_addr, custom_header, args.zstd_level) {
+            if let Err(e) = handle_connection(stream, &forward_addr, custom_header, args.zstd_level)
+            {
                 eprintln!("Error handling connection: {}", e);
             }
         });
