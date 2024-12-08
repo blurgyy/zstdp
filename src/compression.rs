@@ -5,14 +5,18 @@ pub enum CompressionType {
     None,
 }
 
-pub fn determine_compression(accept_encoding: &str) -> CompressionType {
-    let binding = accept_encoding.to_lowercase();
-    let encodings: Vec<&str> = binding.split(',').map(|s| s.trim()).collect();
-    if encodings.iter().any(|&e| e == "zstd") {
-        CompressionType::Zstd
-    } else if encodings.iter().any(|&e| e == "gzip") {
-        CompressionType::Gzip
-    } else {
-        CompressionType::None
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub struct AcceptedCompression {
+    pub supports_zstd: bool,
+    pub supports_gzip: bool,
+}
+
+pub fn determine_compression(accept_encoding: &str) -> AcceptedCompression {
+    let lowercase_ae = accept_encoding.to_lowercase();
+    let encodings: Vec<&str> = lowercase_ae.split(',').map(|s| s.trim()).collect();
+
+    AcceptedCompression {
+        supports_zstd: encodings.iter().any(|&e| e == "zstd"),
+        supports_gzip: encodings.iter().any(|&e| e == "gzip"),
     }
 }
