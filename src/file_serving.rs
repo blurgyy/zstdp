@@ -46,10 +46,14 @@ mod path_utils {
         };
         debug!("Canonical base dir: {}", canonical_base.display());
 
-        let decoded_path = match percent_decode_str(request_path).decode_utf8() {
+        // Strip query parameters from the request path
+        let path_without_query = request_path.split('?').next().unwrap_or(request_path);
+        debug!("Path without query parameters: {}", path_without_query);
+
+        let decoded_path = match percent_decode_str(path_without_query).decode_utf8() {
             Ok(p) => p,
             Err(e) => {
-                warn!("Failed to decode path {}: {}", request_path, e);
+                warn!("Failed to decode path {}: {}", path_without_query, e);
                 return Err(io::Error::new(io::ErrorKind::InvalidData, e));
             }
         };
