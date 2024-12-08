@@ -1,5 +1,6 @@
 use flate2::write::GzEncoder;
 use flate2::Compression as GzipCompression;
+use log::{debug, info, warn};
 use mime_guess::from_path;
 use percent_encoding::percent_decode_str;
 use std::fs::{self, File};
@@ -24,29 +25,74 @@ mod path_utils {
     use super::*;
 
     pub fn sanitize_path(base_dir: &Path, request_path: &str) -> io::Result<Option<PathBuf>> {
-        let canonical_base = fs::canonicalize(base_dir)?;
-
-        let decoded_path = percent_decode_str(request_path)
-            .decode_utf8()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-        let requested_path = canonical_base.join(
-            PathBuf::from(decoded_path.as_ref())
-                .components()
-                .filter(|c| matches!(c, std::path::Component::Normal(_)))
-                .collect::<PathBuf>(),
+        debug!(
+            "Sanitizing path - base_dir: {}, request_path: {}",
+            base_dir.display(),
+            request_path
         );
 
-        let canonical_requested = match fs::canonicalize(&requested_path) {
-            Ok(path) => path,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => requested_path,
-            Err(e) => return Err(e),
+        let canonical_base = match fs::canonicalize(base_dir) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(
+                    "Failed to canonicalize base directory {}: {}",
+                    base_dir.display(),
+                    e
+                );
+                return Err(e);
+            }
         };
+        debug!("Canonical base dir: {}", canonical_base.display());
 
-        if canonical_requested.starts_with(&canonical_base) {
-            Ok(Some(canonical_requested))
-        } else {
-            Ok(None)
+        let decoded_path = match percent_decode_str(request_path).decode_utf8() {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Failed to decode path {}: {}", request_path, e);
+                return Err(io::Error::new(io::ErrorKind::InvalidData, e));
+            }
+        };
+        debug!("Decoded request path: {}", decoded_path);
+
+        let cleaned_path = PathBuf::from(decoded_path.as_ref())
+            .components()
+            .filter(|c| matches!(c, std::path::Component::Normal(_)))
+            .collect::<PathBuf>();
+        debug!("Cleaned path components: {}", cleaned_path.display());
+
+        let requested_path = canonical_base.join(&cleaned_path);
+        debug!("Combined path: {}", requested_path.display());
+
+        match fs::canonicalize(&requested_path) {
+            Ok(path) => {
+                debug!("Successfully canonicalized to: {}", path.display());
+                if path.starts_with(&canonical_base) {
+                    debug!("Path is within base directory");
+                    Ok(Some(path))
+                } else {
+                    warn!("Path escapes base directory: {}", path.display());
+                    Ok(None)
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                debug!(
+                    "Path doesn't exist, using non-canonicalized: {}",
+                    requested_path.display()
+                );
+                if requested_path.starts_with(&canonical_base) {
+                    Ok(Some(requested_path))
+                } else {
+                    warn!("Non-existent path would escape base directory");
+                    Ok(None)
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Error canonicalizing path {}: {}",
+                    requested_path.display(),
+                    e
+                );
+                Err(e)
+            }
         }
     }
 
@@ -55,32 +101,64 @@ mod path_utils {
         path: &Path,
         requested_compression: CompressionType,
     ) -> io::Result<Option<PrecompressedFile>> {
-        // Only look for precompressed files if compression is requested
+        info!("Checking for pre-compressed version of: {}", path.display());
+        debug!("Base directory: {}", base_dir.display());
+        debug!("Requested compression: {:?}", requested_compression);
+
         if requested_compression == CompressionType::None {
+            debug!("No compression requested, skipping pre-compressed file check");
             return Ok(None);
         }
 
-        // Check for precompressed files in order of preference
-        let possible_paths = match requested_compression {
-            CompressionType::Zstd => vec![(path.with_extension("zst"), CompressionType::Zstd)],
-            CompressionType::Gzip => vec![(path.with_extension("gz"), CompressionType::Gzip)],
-            CompressionType::None => vec![],
+        // Canonicalize base_dir to handle relative paths
+        let canonical_base = fs::canonicalize(base_dir)?;
+        debug!("Canonical base dir: {}", canonical_base.display());
+
+        // Extract the path components relative to canonical base_dir
+        let rel_path = path
+            .strip_prefix(&canonical_base)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        debug!("Relative path: {}", rel_path.display());
+
+        // Get the compressed file extension
+        let compressed_ext = match requested_compression {
+            CompressionType::Zstd => ".zst",
+            CompressionType::Gzip => ".gz",
+            CompressionType::None => return Ok(None),
         };
 
-        // Try each possible precompressed file
-        for (compressed_path, compression) in possible_paths {
-            if let Some(validated_path) =
-                sanitize_path(base_dir, &compressed_path.to_string_lossy())?
-            {
-                if validated_path.exists() {
-                    return Ok(Some(PrecompressedFile {
-                        path: validated_path,
-                        compression,
-                    }));
-                }
+        // Create the compressed file path by appending the compression extension
+        let compressed_path = canonical_base.join(Path::new(&format!(
+            "{}{}",
+            rel_path.display(),
+            compressed_ext
+        )));
+        debug!("Checking compressed path: {}", compressed_path.display());
+
+        // Rest of the function remains the same...
+        if compressed_path.exists() {
+            debug!("Found existing compressed file");
+            let metadata = fs::metadata(&compressed_path)?;
+            if metadata.is_file() {
+                info!(
+                    "Found valid pre-compressed file: {}",
+                    compressed_path.display()
+                );
+                return Ok(Some(PrecompressedFile {
+                    path: compressed_path,
+                    compression: requested_compression,
+                }));
+            } else {
+                debug!("Path exists but is not a file");
             }
+        } else {
+            debug!("Compressed file does not exist");
         }
 
+        info!(
+            "No suitable pre-compressed file found for: {}",
+            path.display()
+        );
         Ok(None)
     }
 }
@@ -93,66 +171,108 @@ pub mod handlers {
     use super::*;
     use std::net::TcpStream;
 
-    fn serve_file(
+    pub fn serve_file(
         base_dir: &Path,
         request_path: &str,
         compression: CompressionType,
         zstd_level: i32,
         gzip_level: u32,
     ) -> io::Result<Option<FileResponse>> {
+        info!("Received request for path: {}", request_path);
+        debug!("Base directory: {}", base_dir.display());
+        debug!("Requested compression: {:?}", compression);
+
+        // First sanitize_path call
         let path = match sanitize_path(base_dir, request_path)? {
-            Some(p) => p,
-            None => return Ok(None),
+            Some(p) => {
+                info!("Sanitized path: {}", p.display());
+                p
+            }
+            None => {
+                warn!("Path sanitization failed or path is outside base directory");
+                return Ok(None);
+            }
         };
 
+        // Handle directory case by appending index.html
         let final_path = if path.is_dir() {
+            info!("Path is a directory, looking for index.html");
             path.join("index.html")
         } else {
             path
         };
 
-        let final_path = match sanitize_path(base_dir, &final_path.to_string_lossy())? {
-            Some(p) => p,
-            None => return Ok(None),
-        };
+        info!("Final resolved path: {}", final_path.display());
 
+        // From here on, use final_path for existence check and file operations
+        if !final_path.exists() {
+            warn!("File not found: {}", final_path.display());
+            return Ok(None);
+        }
+
+        let metadata = fs::metadata(&final_path)?;
+        if !metadata.is_file() {
+            warn!(
+                "Path exists but is not a regular file: {}",
+                final_path.display()
+            );
+            return Ok(None);
+        }
+
+        // Check for pre-compressed files
         let (actual_path, pre_compressed_type) =
             if let Some(precompressed) = find_precompressed(base_dir, &final_path, compression)? {
+                info!(
+                    "Using pre-compressed file: {} with compression {:?}",
+                    precompressed.path.display(),
+                    precompressed.compression
+                );
                 (precompressed.path, Some(precompressed.compression))
             } else {
+                info!(
+                    "No pre-compressed file found, will serve: {}",
+                    final_path.display()
+                );
                 (final_path.clone(), None)
             };
 
-        if !actual_path.exists() {
-            return Ok(None);
-        }
-
-        let metadata = fs::metadata(&actual_path)?;
-        if !metadata.is_file() {
-            return Ok(None);
-        }
-
+        // Rest of the function remains the same...
         let mut content = Vec::new();
         File::open(&actual_path)?.read_to_end(&mut content)?;
 
         let mime_type = from_path(&final_path).first_or_octet_stream().to_string();
+        info!("Determined MIME type: {}", mime_type);
 
         let (final_content, final_compression) = match pre_compressed_type {
-            Some(comp_type) => (content, comp_type),
+            Some(comp_type) => {
+                info!("Using pre-compressed content with {:?}", comp_type);
+                (content, comp_type)
+            }
             None => match compression {
                 CompressionType::Zstd => {
+                    info!("Compressing with zstd level {}", zstd_level);
                     let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level)?;
                     encoder.write_all(&content)?;
                     (encoder.finish()?, CompressionType::Zstd)
                 }
                 CompressionType::Gzip => {
+                    info!("Compressing with gzip level {}", gzip_level);
                     let mut encoder = GzEncoder::new(Vec::new(), GzipCompression::new(gzip_level));
                     encoder.write_all(&content)?;
                     (encoder.finish()?, CompressionType::Gzip)
                 }
-                CompressionType::None => (content, CompressionType::None),
+                CompressionType::None => {
+                    info!("Serving uncompressed content");
+                    (content, CompressionType::None)
+                }
             },
         };
+
+        info!(
+            "Successfully prepared response: {} bytes, compression: {:?}",
+            final_content.len(),
+            final_compression
+        );
 
         Ok(Some(FileResponse {
             content: final_content,
@@ -160,7 +280,6 @@ pub mod handlers {
             compression: final_compression,
         }))
     }
-
     pub fn handle_file_request(
         mut client: TcpStream,
         base_dir: &Path,

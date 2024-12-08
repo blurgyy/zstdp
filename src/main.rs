@@ -11,6 +11,7 @@ use args::Args;
 use server::start_server;
 
 fn main() -> io::Result<()> {
+    env_logger::init();
     let args = Args::parse();
     start_server(args)
 }
