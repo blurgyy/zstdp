@@ -64,7 +64,6 @@ mod transfer {
     pub fn forward_request(
         client: &mut TcpStream,
         server: &mut TcpStream,
-        custom_header: &Option<String>,
     ) -> io::Result<(Vec<(String, String)>, bool)> {
         let mut request = Vec::new();
         let mut headers = Vec::new();
@@ -92,11 +91,6 @@ mod transfer {
             }
         }
 
-        // Add custom header if provided
-        if let Some(header) = custom_header {
-            request.extend_from_slice(format!("{}\r\n", header).as_bytes());
-        }
-
         // Forward request to server
         server.write_all(&request)?;
         server.write_all(b"\r\n")?;
@@ -122,13 +116,12 @@ pub mod handlers {
     pub fn handle_proxy_connection(
         mut client: TcpStream,
         forward_addr: &str,
-        custom_header: Option<String>,
         zstd_level: i32,
     ) -> io::Result<()> {
         let mut server = TcpStream::connect(forward_addr)?;
 
         // Forward request to server
-        let (_, supports_zstd) = forward_request(&mut client, &mut server, &custom_header)?;
+        let (_, supports_zstd) = forward_request(&mut client, &mut server)?;
 
         // Read and forward response
         let mut response_headers = Vec::new();

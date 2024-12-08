@@ -14,9 +14,6 @@ pub struct Args {
     #[arg(short, long)]
     pub serve_dir: Option<PathBuf>,
 
-    #[arg(short, long)]
-    pub custom_header: Option<String>,
-
     #[arg(short, long, default_value = "3")]
     pub zstd_level: i32,
 

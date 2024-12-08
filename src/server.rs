@@ -37,12 +37,7 @@ fn handle_connection(client: TcpStream, args: &Args) -> io::Result<()> {
     match (&args.forward_addr, &args.serve_dir) {
         (Some(forward_addr), None) => {
             info!("Handling proxy request to {}", forward_addr);
-            handle_proxy_connection(
-                client,
-                forward_addr,
-                args.custom_header.clone(),
-                args.zstd_level,
-            )
+            handle_proxy_connection(client, forward_addr, args.zstd_level)
         }
         (None, Some(serve_dir)) => {
             info!("Handling file serving request from {}", serve_dir.display());
