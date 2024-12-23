@@ -10,7 +10,10 @@ mod headers {
             .filter_map(|line| {
                 let parts: Vec<&str> = line.splitn(2, ':').collect();
                 if parts.len() == 2 {
-                    Some((parts[0].trim().to_string(), parts[1].trim().to_string()))
+                    Some((
+                        parts[0].trim().to_lowercase(), // Make key lowercase
+                        parts[1].trim().to_string(),
+                    ))
                 } else {
                     None
                 }
@@ -112,18 +115,24 @@ pub mod handlers {
     use super::headers::parse_response_headers;
     use super::transfer::{forward_chunked_body, forward_request};
     use super::*;
+    use log::debug;
 
     pub fn handle_proxy_connection(
         mut client: TcpStream,
         forward_addr: &str,
         zstd_level: i32,
     ) -> io::Result<()> {
+        debug!("Attempting to connect to {}", forward_addr);
         let mut server = TcpStream::connect(forward_addr)?;
+        debug!("Connected to backend server");
 
         // Forward request to server
+        debug!("Forwarding request to server");
         let (_, supports_zstd) = forward_request(&mut client, &mut server)?;
+        debug!("Request forwarded, supports_zstd: {}", supports_zstd);
 
-        // Read and forward response
+        // Read response headers
+        debug!("Reading response headers");
         let mut response_headers = Vec::new();
         let mut byte = [0u8; 1];
         while let Ok(1) = server.read(&mut byte) {
@@ -135,17 +144,46 @@ pub mod handlers {
 
         let response_headers_str = String::from_utf8_lossy(&response_headers).to_string();
         let (status_line, headers) = parse_response_headers(&response_headers_str);
+        debug!("Parsed status line: {}", status_line);
 
-        let chunked = headers.iter().any(|(k, v)| {
+        // Check if response is already compressed
+        let is_already_zstd = headers.iter().any(|(k, v)| {
+            k.to_lowercase() == "content-encoding" && v.to_lowercase().contains("zstd")
+        });
+        let is_chunked = headers.iter().any(|(k, v)| {
             k.to_lowercase() == "transfer-encoding" && v.to_lowercase().contains("chunked")
         });
-
         let content_length = headers
             .iter()
             .find(|(k, _)| k.to_lowercase() == "content-length")
             .and_then(|(_, v)| v.parse::<usize>().ok());
 
-        // Modify headers for zstd if client supports it
+        debug!(
+            "Response is already: zstd={}, chunked={}",
+            is_already_zstd, is_chunked
+        );
+
+        // If the response is already compressed with zstd, just forward it as-is
+        if is_already_zstd {
+            debug!("Response is already zstd compressed, forwarding as-is");
+            // Forward headers exactly as received
+            client.write_all(&response_headers)?;
+
+            // Forward body as-is
+            if is_chunked {
+                debug!("Forwarding chunked body");
+                forward_chunked_body(&mut server, &mut client)?;
+            } else if let Some(length) = content_length {
+                debug!("Forwarding {} bytes directly", length);
+                io::copy(&mut server.take(length as u64), &mut client)?;
+            } else {
+                debug!("No content length, forwarding until EOF");
+                io::copy(&mut server, &mut client)?;
+            }
+            return Ok(());
+        }
+
+        // Modify headers for zstd if client supports it and response isn't already compressed
         let mut modified_headers = headers.clone();
         if supports_zstd {
             modified_headers.retain(|(k, _)| k.to_lowercase() != "content-length");
@@ -163,14 +201,17 @@ pub mod handlers {
         // Forward body with optional compression
         if supports_zstd {
             let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level)?;
-            if chunked {
+            if is_chunked {
                 forward_chunked_body(&mut server, &mut encoder)?;
             } else if let Some(length) = content_length {
                 io::copy(&mut server.take(length as u64), &mut encoder)?;
             } else {
                 io::copy(&mut server, &mut encoder)?;
             }
+
             let compressed = encoder.finish()?;
+            debug!("Compressed size: {} bytes", compressed.len());
+
             let mut chunked_writer = BufWriter::new(&mut client);
             for chunk in compressed.chunks(8192) {
                 write!(chunked_writer, "{:X}\r\n", chunk.len())?;
@@ -180,7 +221,7 @@ pub mod handlers {
             write!(chunked_writer, "0\r\n\r\n")?;
             chunked_writer.flush()?;
         } else {
-            if chunked {
+            if is_chunked {
                 forward_chunked_body(&mut server, &mut client)?;
             } else if let Some(length) = content_length {
                 io::copy(&mut server.take(length as u64), &mut client)?;
