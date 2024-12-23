@@ -24,6 +24,8 @@ mod headers {
 }
 
 mod transfer {
+    use crate::compression::determine_compression;
+
     use super::*;
 
     pub fn forward_chunked_body<R: Read, W: Write>(
@@ -81,9 +83,10 @@ mod transfer {
             !line.trim().is_empty()
         } {
             request.extend_from_slice(line.as_bytes());
-            if line.to_lowercase().starts_with("accept-encoding:")
-                && line.to_lowercase().contains("zstd")
-            {
+            if line.to_lowercase().starts_with("accept-encoding:") && {
+                let accept_encoding = line.split(':').map(|s| s.trim()).collect::<Vec<_>>()[1];
+                determine_compression(accept_encoding).supports_zstd
+            } {
                 supports_zstd = true;
             }
             if !line.to_lowercase().starts_with("host:") {
@@ -147,23 +150,30 @@ pub mod handlers {
         debug!("Parsed status line: {}", status_line);
 
         // Check various response properties
-        let current_encoding = headers.iter()
+        let current_encoding = headers
+            .iter()
             .find(|(k, _)| k.to_lowercase() == "content-encoding")
             .map(|(_, v)| v.to_lowercase());
         let is_already_compressed = current_encoding.is_some();
-        let is_chunked = headers.iter().any(|(k, v)|
+        let is_chunked = headers.iter().any(|(k, v)| {
             k.to_lowercase() == "transfer-encoding" && v.to_lowercase().contains("chunked")
-        );
+        });
         let content_length = headers
             .iter()
             .find(|(k, _)| k.to_lowercase() == "content-length")
             .and_then(|(_, v)| v.parse::<usize>().ok());
 
-        debug!("Response encoding: {:?}, chunked={}", current_encoding, is_chunked);
+        debug!(
+            "Response encoding: {:?}, chunked={}",
+            current_encoding, is_chunked
+        );
 
         // If the response is already compressed, just forward it as-is
         if is_already_compressed {
-            debug!("Response is already compressed with {:?}, forwarding as-is", current_encoding);
+            debug!(
+                "Response is already compressed with {:?}, forwarding as-is",
+                current_encoding
+            );
             // Forward headers exactly as received
             client.write_all(&response_headers)?;
 
