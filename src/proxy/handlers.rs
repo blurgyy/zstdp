@@ -9,20 +9,20 @@ use std::time::Instant;
 
 pub fn handle_proxy_connection(
     mut client: TcpStream,
-    forward_addr: &str,
+    forward: &str,
     zstd_level: i32,
 ) -> io::Result<()> {
     let start_time = Instant::now();
-    log::debug!("→ New proxy connection to {}", forward_addr);
+    log::debug!("→ New proxy connection to {}", forward);
 
-    let mut server = TcpStream::connect(forward_addr).map_err(|e| {
-        log::error!("Failed to connect to backend {}: {}", forward_addr, e);
+    let mut server = TcpStream::connect(forward).map_err(|e| {
+        log::error!("Failed to connect to backend {}: {}", forward, e);
         e
     })?;
     log::debug!("Connected to backend server in {:?}", start_time.elapsed());
 
     // Forward request to server
-    let (_headers, supports_zstd) = forward_addr.log_operation("forward_request", || {
+    let (_headers, supports_zstd) = forward.log_operation("forward_request", || {
         forward_request(&mut client, &mut server.try_clone()?)
     })?;
 
@@ -64,7 +64,7 @@ pub fn handle_proxy_connection(
     );
 
     if is_already_compressed {
-        forward_addr.log_operation("forward_compressed", || {
+        forward.log_operation("forward_compressed", || {
             // Forward headers and body as-is
             client.write_all(&response_headers)?;
 
@@ -79,7 +79,7 @@ pub fn handle_proxy_connection(
             }
         })?;
     } else {
-        forward_addr.log_operation("forward_with_compression", || {
+        forward.log_operation("forward_with_compression", || {
             let mut modified_headers = headers.clone();
             if supports_zstd {
                 modified_headers.retain(|(k, _)| k.to_lowercase() != "content-length");

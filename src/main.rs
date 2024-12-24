@@ -17,13 +17,13 @@ fn main() -> io::Result<()> {
 
     let args = Args::parse();
     log::info!("Starting server with configuration:");
-    log::info!("  Listen address: {}", args.listen_addr);
+    log::info!("  Listen address: {}", args.listen_addr());
 
-    if let Some(addr) = &args.forward_addr {
+    if let Some(addr) = &args.forward {
         log::info!("  Mode: Proxy");
         log::info!("  Forward address: {}", addr);
         log::info!("  Zstd compression level: {}", args.zstd_level);
-    } else if let Some(dir) = &args.serve_dir {
+    } else if let Some(dir) = &args.serve {
         log::info!("  Mode: File Server");
         log::info!("  Serving directory: {}", dir.display());
         log::info!(

@@ -10,10 +10,10 @@ use crate::proxy::handlers::handle_proxy_connection;
 use crate::{log_error, log_request, log_response};
 
 pub fn start_server(args: Args) -> io::Result<()> {
-    let listener = TcpListener::bind(&args.listen_addr)?;
-    log::info!("Server started on: {}", args.listen_addr);
+    let listener = TcpListener::bind(args.listen_addr())?;
+    log::info!("Server started on: {}", args.listen_addr());
 
-    match (&args.forward_addr, &args.serve_dir) {
+    match (&args.forward, &args.serve) {
         (Some(addr), None) => log::info!("Mode: Proxy → {}", addr),
         (None, Some(dir)) => log::info!("Mode: File Server → {}", dir.display()),
         _ => unreachable!(),
@@ -43,10 +43,10 @@ fn handle_connection(client: TcpStream, args: &Args) -> io::Result<()> {
     let peer_addr = client.peer_addr()?;
     log::debug!("→ New connection from {}", peer_addr);
 
-    let result = match (&args.forward_addr, &args.serve_dir) {
-        (Some(forward_addr), None) => forward_addr.log_operation("proxy_request", || {
+    let result = match (&args.forward, &args.serve) {
+        (Some(forward), None) => forward.log_operation("proxy_request", || {
             let request_time = Instant::now();
-            let result = handle_proxy_connection(client, forward_addr, args.zstd_level);
+            let result = handle_proxy_connection(client, forward, args.zstd_level);
 
             match &result {
                 Ok(_) => log_response!("200 OK", request_time.elapsed()),
@@ -55,7 +55,7 @@ fn handle_connection(client: TcpStream, args: &Args) -> io::Result<()> {
 
             result
         }),
-        (None, Some(serve_dir)) => serve_dir.log_operation("serve_files", || {
+        (None, Some(serve)) => serve.log_operation("serve_files", || {
             let mut buf_reader = BufReader::new(&client);
             let mut first_line = String::new();
             buf_reader.read_line(&mut first_line)?;
@@ -79,7 +79,7 @@ fn handle_connection(client: TcpStream, args: &Args) -> io::Result<()> {
 
             let result = handle_file_request(
                 client,
-                serve_dir,
+                serve,
                 &first_line,
                 &headers,
                 args.zstd_level,
