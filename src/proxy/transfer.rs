@@ -1,4 +1,3 @@
-use log::debug;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::time::Instant;
@@ -33,12 +32,12 @@ pub fn forward_chunked_body<R: Read, W: Write>(reader: &mut R, writer: &mut W) -
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         if size == 0 {
-            debug!("Reached end of chunked body, total bytes: {}", total_bytes);
+            log::debug!("Reached end of chunked body, total bytes: {}", total_bytes);
             break;
         }
 
         total_bytes += size;
-        debug!("Forwarding chunk of size: {} bytes", size);
+        log::debug!("Forwarding chunk of size: {} bytes", size);
 
         io::copy(&mut reader.take(size as u64), writer)?;
 
@@ -53,7 +52,7 @@ pub fn forward_chunked_body<R: Read, W: Write>(reader: &mut R, writer: &mut W) -
     reader.read_exact(&mut final_crlf)?;
     writer.write_all(&final_crlf)?;
 
-    debug!(
+    log::debug!(
         "Completed chunked body transfer: {} bytes in {:?}",
         total_bytes,
         start_time.elapsed()
@@ -72,7 +71,7 @@ pub fn forward_request(
     let mut supports_zstd = false;
     let mut buf_reader = BufReader::new(client);
 
-    debug!("Starting request forwarding");
+    log::debug!("Starting request forwarding");
 
     // Read and forward request line
     let mut first_line = String::new();
@@ -94,7 +93,7 @@ pub fn forward_request(
         if line.to_lowercase().starts_with("accept-encoding:") {
             let accept_encoding = line.split(':').map(|s| s.trim()).collect::<Vec<_>>()[1];
             supports_zstd = determine_compression(accept_encoding).supports_zstd;
-            debug!("Client accepts zstd compression: {}", supports_zstd);
+            log::debug!("Client accepts zstd compression: {}", supports_zstd);
         }
 
         if !line.to_lowercase().starts_with("host:") {
@@ -116,11 +115,11 @@ pub fn forward_request(
         .find(|(k, _)| k.to_lowercase() == "content-length")
         .and_then(|(_, v)| v.parse::<u64>().ok())
     {
-        debug!("Forwarding request body of {} bytes", length);
+        log::debug!("Forwarding request body of {} bytes", length);
         io::copy(&mut buf_reader.take(length), server)?;
     }
 
-    debug!("Completed request forwarding in {:?}", start_time.elapsed());
+    log::debug!("Completed request forwarding in {:?}", start_time.elapsed());
 
     Ok((headers, supports_zstd))
 }
