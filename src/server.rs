@@ -5,9 +5,9 @@ use std::time::Instant;
 
 use crate::args::Args;
 use crate::file_serving::handlers::handle_file_request;
-use crate::{log_error, log_request, log_response};
 use crate::logging::LoggingExt;
 use crate::proxy::handlers::handle_proxy_connection;
+use crate::{log_error, log_request, log_response};
 
 pub fn start_server(args: Args) -> io::Result<()> {
     let listener = TcpListener::bind(&args.listen_addr)?;
