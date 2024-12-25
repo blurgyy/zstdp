@@ -54,6 +54,12 @@ with lib;
               client supports them.
             '';
           };
+          bypassUris = mkOption {
+            type = types.listOf types.str;
+            default = [];
+            example = [ "^/log/.*" ];
+            description = "A list of regular expressions to directly return the backend's response.";
+          };
           zstdLevel = mkOption {
             type = types.int;
             default = 3;
@@ -97,6 +103,12 @@ with lib;
             ${if svcConfig.forward != null
               then "-f ${svcConfig.forward}"
               else "-s ${svcConfig.serve}"
+            } \
+            ${concatStringsSep
+              " "
+              (map
+                (pathRegex: "-i ${escapeShellArg pathRegex}")
+                svcConfig.bypassUris)
             } \
             -z ${toString svcConfig.zstdLevel} \
             -g ${toString svcConfig.gzipLevel}
