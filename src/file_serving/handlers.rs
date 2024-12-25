@@ -1,5 +1,6 @@
 use path_utils::{find_precompressed, sanitize_path};
 use regex::Regex;
+use std::io::ErrorKind;
 
 use crate::{
     args::should_bypass_compression,
@@ -76,7 +77,7 @@ pub fn serve_file(
 
     // If no pre-compressed file exists, check if original file exists
     if !final_path.exists() {
-        log::warn!("File not found: {}", final_path.display());
+        log::debug!("File not found: {}", final_path.display());
         return Ok(None);
     }
 
@@ -164,6 +165,7 @@ pub fn handle_file_request(
                 .write_all(format!("Content-Length: {}\r\n", response.content.len()).as_bytes())?;
             client.write_all(b"\r\n")?;
             client.write_all(&response.content)?;
+            Ok(())
         }
         None => {
             client.write_all(b"HTTP/1.1 404 Not Found\r\n")?;
@@ -171,8 +173,7 @@ pub fn handle_file_request(
             client.write_all(b"Content-Length: 9\r\n")?;
             client.write_all(b"\r\n")?;
             client.write_all(b"Not Found")?;
+            Err(io::Error::new(ErrorKind::NotFound, "File not found"))
         }
     }
-
-    Ok(())
 }

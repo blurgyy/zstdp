@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, ErrorKind};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
@@ -117,11 +117,21 @@ fn handle_connection(
 
             // Add response logging based on file existence
             match &result {
-                Ok(_) => log_response!("200 OK", request_time.elapsed()),
-                Err(_) => log_response!("500 Internal Server Error", request_time.elapsed()),
+                Ok(_) => {
+                    log_response!("200 OK", request_time.elapsed());
+                    Ok(())
+                }
+                Err(e) => match e.kind() {
+                    ErrorKind::NotFound => {
+                        log_response!("404 Not Found", request_time.elapsed());
+                        Ok(())
+                    }
+                    _ => {
+                        log_response!("500 Internal Server Error", request_time.elapsed());
+                        result
+                    }
+                },
             }
-
-            result
         }),
         _ => unreachable!(),
     };
