@@ -1,16 +1,20 @@
 use io::BufWriter;
+use regex::Regex;
 
+use crate::args::should_bypass_compression;
 use crate::logging::LoggingExt;
 
 use super::headers::parse_response_headers;
 use super::transfer::{forward_chunked_body, forward_request};
 use super::*;
+use std::sync::Arc;
 use std::time::Instant;
 
 pub fn handle_proxy_connection(
     mut client: TcpStream,
     forward: &str,
     zstd_level: i32,
+    bypass_patterns: Arc<Vec<Regex>>,
 ) -> io::Result<()> {
     let start_time = Instant::now();
     log::debug!("→ New proxy connection to {}", forward);
@@ -22,9 +26,15 @@ pub fn handle_proxy_connection(
     log::debug!("Connected to backend server in {:?}", start_time.elapsed());
 
     // Forward request to server
-    let (_headers, supports_zstd) = forward.log_operation("forward_request", || {
+    let (_headers, supports_zstd, uri) = forward.log_operation("forward_request", || {
         forward_request(&mut client, &mut server.try_clone()?)
     })?;
+
+    // Check if request should bypass compression
+    let should_bypass = should_bypass_compression(&uri, &bypass_patterns);
+    if should_bypass {
+        log::debug!("URI '{}' matches bypass pattern, skipping compression", uri);
+    }
 
     // Read response headers
     let mut response_headers = Vec::new();
@@ -63,7 +73,7 @@ pub fn handle_proxy_connection(
         content_length
     );
 
-    if is_already_compressed {
+    if is_already_compressed || should_bypass {
         forward.log_operation("forward_compressed", || {
             // Forward headers and body as-is
             client.write_all(&response_headers)?;

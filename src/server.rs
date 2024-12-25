@@ -1,7 +1,10 @@
 use std::io::{self, BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
+
+use regex::Regex;
 
 use crate::args::Args;
 use crate::file_serving::handlers::handle_file_request;
@@ -19,12 +22,33 @@ pub fn start_server(args: Args) -> io::Result<()> {
         _ => unreachable!(),
     }
 
+    let bypass_patterns = {
+        let patterns: Result<Vec<Regex>, regex::Error> =
+            args.bypass.iter().map(|p| Regex::new(p)).collect();
+
+        match patterns {
+            Ok(patterns) => {
+                if !patterns.is_empty() {
+                    log::info!("Loaded {} bypass patterns for compression", patterns.len());
+                }
+                Arc::new(patterns)
+            }
+            Err(e) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Invalid bypass pattern: {}", e),
+                ));
+            }
+        }
+    };
+
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 let args = args.clone();
+                let bypass_patterns = Arc::clone(&bypass_patterns);
                 thread::spawn(move || {
-                    if let Err(e) = handle_connection(stream, &args) {
+                    if let Err(e) = handle_connection(stream, &args, bypass_patterns) {
                         log_error!(e, "Connection handler failed");
                     }
                 });
@@ -38,7 +62,11 @@ pub fn start_server(args: Args) -> io::Result<()> {
     Ok(())
 }
 
-fn handle_connection(client: TcpStream, args: &Args) -> io::Result<()> {
+fn handle_connection(
+    client: TcpStream,
+    args: &Args,
+    bypass_patterns: Arc<Vec<Regex>>,
+) -> io::Result<()> {
     let start_time = Instant::now();
     let peer_addr = client.peer_addr()?;
     log::debug!("→ New connection from {}", peer_addr);
@@ -46,7 +74,7 @@ fn handle_connection(client: TcpStream, args: &Args) -> io::Result<()> {
     let result = match (&args.forward, &args.serve) {
         (Some(forward), None) => forward.log_operation("proxy_request", || {
             let request_time = Instant::now();
-            let result = handle_proxy_connection(client, forward, args.zstd_level);
+            let result = handle_proxy_connection(client, forward, args.zstd_level, bypass_patterns);
 
             match &result {
                 Ok(_) => log_response!("200 OK", request_time.elapsed()),
@@ -84,6 +112,7 @@ fn handle_connection(client: TcpStream, args: &Args) -> io::Result<()> {
                 &headers,
                 args.zstd_level,
                 args.gzip_level,
+                &bypass_patterns,
             );
 
             // Add response logging based on file existence

@@ -1,6 +1,10 @@
 use path_utils::{find_precompressed, sanitize_path};
+use regex::Regex;
 
-use crate::compression::{determine_compression, AcceptedCompression};
+use crate::{
+    args::should_bypass_compression,
+    compression::{determine_compression, AcceptedCompression},
+};
 
 use super::*;
 use std::net::TcpStream;
@@ -11,6 +15,7 @@ pub fn serve_file(
     accepted_compression: AcceptedCompression,
     zstd_level: i32,
     gzip_level: u32,
+    bypass_patterns: &[Regex],
 ) -> io::Result<Option<FileResponse>> {
     log::debug!("Received request for path: {}", request_path);
     log::trace!("Base directory: {}", base_dir.display());
@@ -19,6 +24,15 @@ pub fn serve_file(
         accepted_compression.supports_zstd,
         accepted_compression.supports_gzip
     );
+
+    // Check if request should bypass compression
+    let should_bypass = should_bypass_compression(request_path, bypass_patterns);
+    if should_bypass {
+        log::debug!(
+            "Path '{}' matches bypass pattern, skipping compression",
+            request_path
+        );
+    }
 
     let path = match sanitize_path(base_dir, request_path)? {
         Some(p) => {
@@ -82,7 +96,9 @@ pub fn serve_file(
     let mime_type = from_path(&final_path).first_or_octet_stream().to_string();
 
     // Compress if needed
-    let (final_content, compression) = if accepted_compression.supports_zstd {
+    let (final_content, compression) = if should_bypass {
+        (content, CompressionType::None)
+    } else if accepted_compression.supports_zstd {
         log::debug!("Compressing with zstd level {}", zstd_level);
         let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level)?;
         encoder.write_all(&content)?;
@@ -110,6 +126,7 @@ pub fn handle_file_request(
     headers: &[(String, String)],
     zstd_level: i32,
     gzip_level: u32,
+    bypass_patterns: &[Regex],
 ) -> io::Result<()> {
     let accept_encoding = headers
         .iter()
@@ -121,7 +138,14 @@ pub fn handle_file_request(
 
     let request_path = request.split_whitespace().nth(1).unwrap_or("/");
 
-    match serve_file(base_dir, request_path, compression, zstd_level, gzip_level)? {
+    match serve_file(
+        base_dir,
+        request_path,
+        compression,
+        zstd_level,
+        gzip_level,
+        bypass_patterns, // Pass bypass_patterns
+    )? {
         Some(response) => {
             client.write_all(b"HTTP/1.1 200 OK\r\n")?;
             client.write_all(format!("Content-Type: {}\r\n", response.mime_type).as_bytes())?;

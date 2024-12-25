@@ -64,18 +64,24 @@ pub fn forward_chunked_body<R: Read, W: Write>(reader: &mut R, writer: &mut W) -
 pub fn forward_request(
     client: &mut TcpStream,
     server: &mut TcpStream,
-) -> io::Result<(Vec<(String, String)>, bool)> {
+) -> io::Result<(Vec<(String, String)>, bool, String)> {
+    // Add String to return type for URI
     let start_time = Instant::now();
     let mut request = Vec::new();
     let mut headers = Vec::new();
     let mut supports_zstd = false;
+    let mut uri = String::new();
     let mut buf_reader = BufReader::new(client);
-
-    log::debug!("Starting request forwarding");
 
     // Read and forward request line
     let mut first_line = String::new();
     buf_reader.read_line(&mut first_line)?;
+
+    // Extract URI from request line
+    if let Some(uri_part) = first_line.split_whitespace().nth(1) {
+        uri = uri_part.to_string();
+    }
+
     request.extend_from_slice(first_line.as_bytes());
 
     // Log the request after we've read it
@@ -121,5 +127,5 @@ pub fn forward_request(
 
     log::debug!("Completed request forwarding in {:?}", start_time.elapsed());
 
-    Ok((headers, supports_zstd))
+    Ok((headers, supports_zstd, uri))
 }

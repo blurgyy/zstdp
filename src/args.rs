@@ -1,4 +1,5 @@
 use clap::{ArgGroup, Parser};
+use regex::Regex;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone)]
@@ -22,6 +23,14 @@ pub struct Args {
 
     #[arg(short, long, default_value = "6")]
     pub gzip_level: u32,
+
+    #[arg(short = 'i', long, action = clap::ArgAction::Append)]
+    pub bypass: Vec<String>,
+}
+
+pub fn should_bypass_compression(uri: &str, bypass_patterns: &[Regex]) -> bool {
+    log::trace!("{}", uri);
+    bypass_patterns.iter().any(|pattern| pattern.is_match(uri))
 }
 
 impl Args {

@@ -497,5 +497,6 @@ dependencies = [
  "log",
  "mime_guess",
  "percent-encoding",
+ "regex",
  "zstd",
 ]
