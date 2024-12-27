@@ -17,6 +17,16 @@ pub fn start_server(args: Args) -> io::Result<()> {
     let listener = TcpListener::bind(args.listen_addr())?;
     log::info!("Server started on: {}", args.listen_addr());
 
+    // Canonicalize the serve directory at startup if it exists
+    let args = if let Some(serve_dir) = &args.serve {
+        let canonical_dir = std::fs::canonicalize(serve_dir)?;
+        let mut new_args = args.clone();
+        new_args.serve = Some(canonical_dir);
+        new_args
+    } else {
+        args
+    };
+
     match (&args.forward, &args.serve) {
         (Some(addr), None) => log::info!("Mode: Proxy → {}", addr),
         (None, Some(dir)) => log::info!("Mode: File Server → {}", dir.display()),

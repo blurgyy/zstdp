@@ -10,8 +10,7 @@ pub fn sanitize_path(base_dir: &Path, request_path: &str) -> io::Result<Option<P
         request_path
     );
 
-    let canonical_base = base_dir.log_operation("canonicalize", || fs::canonicalize(base_dir))?;
-
+    // base_dir is already canonical, so we don't need to canonicalize it again
     // Strip query parameters from the request path
     let path_without_query = request_path.split('?').next().unwrap_or(request_path);
 
@@ -27,7 +26,7 @@ pub fn sanitize_path(base_dir: &Path, request_path: &str) -> io::Result<Option<P
         .collect::<PathBuf>();
     log::debug!("Cleaned path: {}", cleaned_path.display());
 
-    let requested_path = canonical_base.join(&cleaned_path);
+    let requested_path = base_dir.join(&cleaned_path);
 
     match fs::canonicalize(&requested_path) {
         Ok(path) => {
@@ -37,7 +36,7 @@ pub fn sanitize_path(base_dir: &Path, request_path: &str) -> io::Result<Option<P
                 path.display()
             );
 
-            if path.starts_with(&canonical_base) {
+            if path.starts_with(base_dir) {
                 Ok(Some(path))
             } else {
                 log::warn!("Path escapes base directory: {}", path.display());
@@ -45,7 +44,7 @@ pub fn sanitize_path(base_dir: &Path, request_path: &str) -> io::Result<Option<P
             }
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            if requested_path.starts_with(&canonical_base) {
+            if requested_path.starts_with(base_dir) {
                 log::debug!(
                     "Using non-canonicalized path (not found): {}",
                     requested_path.display()
@@ -79,10 +78,9 @@ pub fn find_precompressed(
         return Ok(None);
     }
 
-    let canonical_base = base_dir.log_operation("canonicalize", || fs::canonicalize(base_dir))?;
-
+    // The base_dir is now already canonical, so we don't need to canonicalize it again
     let rel_path = path.log_operation("strip_prefix", || {
-        path.strip_prefix(&canonical_base)
+        path.strip_prefix(base_dir)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     })?;
 
@@ -97,8 +95,7 @@ pub fn find_precompressed(
 
     // Check each possible compression type
     for (compression_type, extension) in possible_compressions {
-        let compressed_path =
-            canonical_base.join(Path::new(&format!("{}{}", rel_path.display(), extension)));
+        let compressed_path = base_dir.join(Path::new(&format!("{}{}", rel_path.display(), extension)));
         log::debug!("Checking compressed path: {}", compressed_path.display());
 
         if compressed_path.exists() {
