@@ -1,64 +1,136 @@
 # zstdp
 
-A simple HTTP proxy server that compresses HTTP responses using Zstd if the client supports it.
-It forwards requests to a specified backend server and compresses responses with Zstd when
-requested.
+A versatile HTTP server that can function both as a proxy server and a file server, with advanced
+compression support (Zstd and Gzip) and various optimization features.
 
-## Usage
+## Features
 
-### Installation
+- **Dual Mode Operation**:
+  - Proxy Mode: Forward requests to a backend server with optional compression
+  - File Server Mode: Serve static files from a local directory
+
+- **Advanced Compression**:
+  - Zstd compression support with configurable compression levels in both modes
+  - Gzip compression support with configurable compression levels (file server mode)
+  - Content-aware compression with configurable bypass patterns using regex
+  - Pre-compressed file support (.zst and .gz)
+
+- **File Serving Features**:
+  - Single Page Application (SPA) support with configurable routing
+  - Automatic index.html serving for directories
+  - Intelligent cache control headers
+  - Security headers included by default
+  - Path sanitization and security checks
+
+- **Proxy Features**:
+  - Transparent proxying with compression
+  - Chunked transfer encoding support
+  - Header manipulation and forwarding
+  - Custom compression decisions based on content
+
+- **General Features**:
+  - Auto-detected colorized logging with configurable levels
+  - Detailed request/response logging with performance metrics
+  - Multi-threaded request handling
+  - Terminal and non-terminal aware output formatting
+
+## Installation
 
 1. Clone the repository:
-
    ```bash
-   git clone https://github.com/your-username/zstdp.git
+   git clone https://github.com/blurgyy/zstdp.git
    cd zstdp
    ```
 
 2. Build the project:
-
    ```bash
    cargo build --release
    ```
 
-3. Run the compiled binary:
+## Usage
 
+The server can be run in either proxy mode or file server mode:
+
+### Proxy Mode
+
+```bash
+zstdp -b 127.0.0.1 -p 9866 -f backend-server:8080
+```
+
+### File Server Mode
+
+```bash
+zstdp -b 127.0.0.1 -p 9866 -s ./path/to/files
+```
+
+### Command Line Options
+
+```
+Options:
+  -b, --bind <ADDR>          Bind address [default: 127.0.0.1]
+  -p, --port <PORT>          Port number [default: 9866]
+  -f, --forward <URL>        Forward requests to specified URL (proxy mode)
+  -s, --serve <PATH>         Serve files from directory (file server mode)
+  -z, --zstd-level <LEVEL>   Zstd compression level [default: 3]
+  -g, --gzip-level <LEVEL>   Gzip compression level [default: 6]
+  -i, --bypass <PATTERN>     Regex patterns to bypass compression
+      --spa                  Enable SPA mode (serves index.html for non-file routes)
+  -h, --help                 Print help
+  -V, --version             Print version
+```
+
+### Examples
+
+1. Run as a proxy server with custom compression levels:
    ```bash
-   ./target/release/zstdp --listen-addr <LISTEN_ADDRESS> --forward-addr <FORWARD_ADDRESS> [OPTIONS]
+   zstdp -b 0.0.0.0 -p 8080 -f backend:3000 -z 5 -g 7
    ```
 
-### Command-Line Arguments
+2. Run as a file server with SPA support:
+   ```bash
+   zstdp -s ./dist --spa
+   ```
 
-- `-l|--listen-addr` (required): Address to bind the proxy server to (e.g., `127.0.0.1:8080`).
-- `-f|--forward-addr` (required): Address of the backend server to forward requests to (e.g., `127.0.0.1:80`).
-- `-z|--zstd-level` (optional): Compression level for Zstd (default: `3`).
-- `--custom-header` (optional): Add a custom header to all forwarded requests.
+3. Use compression bypass patterns:
+   ```bash
+   zstdp -s ./static -i "\\.jpg$" -i "\\.png$"
+   ```
 
-### Example Usage
+### Environment Variables
 
-Start the proxy server to listen on `127.0.0.1:8080` and forward requests to a backend server at `127.0.0.1:80`:
+- `RUST_LOG`: Configure logging level (error, warn, info, debug, trace)
+  ```bash
+  RUST_LOG=debug zstdp -s ./static
+  ```
 
-```bash
-./target/release/zstdp --listen-addr 127.0.0.1:8080 --forward-addr 127.0.0.1:80
-```
+## Compression Details
 
-Add a custom header and specify a Zstd compression level of `5`:
+The server supports both Zstd and Gzip compression with the following behavior:
 
-```bash
-./target/release/zstdp --listen-addr 127.0.0.1:8080 --forward-addr 127.0.0.1:80 --custom-header "X-Proxy-Header: ZstdProxy" --zstd-level 5
-```
+1. Uses pre-compressed files if available
+2. Falls back to Zstd or Gzip based on client support
+3. Applies bypass patterns to skip compression for specified files
+4. Uses configured compression levels
+
+## Security Features
+
+- Path traversal prevention through path sanitization
+- Proper MIME type detection and handling
+- URL sanitization and validation
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request.
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open
+an issue first to discuss what you would like to change.
 
 ## License
 
-Licensed under the Apache License, Version 2.0 http://www.apache.org/licenses/LICENSE-2.0.
-The files in this repository may not be copied, modified, or distributed except according to those
+Licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+Files in this repository may not be copied, modified, or distributed except according to those
 terms.
 
-## Disclaimer
+## Acknowledgments
 
-The initial version of this project was created with the help of `claude-3.5-sonnet` and
-`im-also-a-good-gpt2-chatbot`.
+This project was developed with the assistance of Claude (Anthropic). Both the codebase and
+documentation were created through collaborative discussion with Claude 3.5 Sonnet, which provided
+guidance on implementation details, feature design, and documentation.
