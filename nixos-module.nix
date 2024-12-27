@@ -60,6 +60,16 @@ with lib;
             example = [ "^/log/.*" ];
             description = "A list of regular expressions to directly return the backend's response.";
           };
+          spa = mkOption {
+            type = types.nullOr types.bool;
+            example = null;
+            description = ''
+              SPAs do routing on the client side and all non-file requests should be redirected to
+              `/index.html`.
+              In file-serving mode, enabling this serves the directory as an SPA.
+              Does nothing when in forwarding mode.
+            '';
+          };
           zstdLevel = mkOption {
             type = types.int;
             default = 3;
@@ -77,12 +87,21 @@ with lib;
   };
 
   config = mkIf cfg.enable {
-    assertions = mapAttrsToList
-      (svcName: svcConfig: {
-        assertion = svcConfig.forward != null && svcConfig.serve == null || svcConfig.forward == null && svcConfig.serve != null;
-        message = ''zstdp service "${svcName}" must have ONE and ONLY ONE of `forward` and `serve` configured!'';
-      })
-      cfg.services;
+    assertions = let
+      onlyOneMode = mapAttrsToList
+        (svcName: svcConfig: {
+          assertion = svcConfig.forward != null && svcConfig.serve == null || svcConfig.forward == null && svcConfig.serve != null;
+          message = ''zstdp service "${svcName}" must have ONE and ONLY ONE of `forward` and `serve` configured!'';
+        })
+        cfg.services;
+      mustSpecifyIfSPAInFileMode = mapAttrsToList
+        (svcName: svcConfig: {
+          assertion = svcConfig.serve == null || svcConfig.spa != null;
+          message = ''zstdp service "${svcName}" uses file-serving mode, it should set if or not it is an SPA!'';
+        })
+        cfg.services;
+    in
+      onlyOneMode ++ mustSpecifyIfSPAInFileMode;
 
     environment.systemPackages = [ cfg.package ];
 
@@ -102,7 +121,7 @@ with lib;
           zstdp -b ${svcConfig.bind.address} -p ${toString svcConfig.bind.port} \
             ${if svcConfig.forward != null
               then "-f ${svcConfig.forward}"
-              else "-s ${svcConfig.serve}"
+              else "-s ${svcConfig.serve}${optionalString svcConfig.spa " --spa"}"
             } \
             ${concatStringsSep
               " "
