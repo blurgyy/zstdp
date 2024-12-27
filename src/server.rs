@@ -8,6 +8,7 @@ use regex::Regex;
 
 use crate::args::Args;
 use crate::file_serving::handlers::handle_file_request;
+use crate::file_serving::spa::SpaConfig;
 use crate::logging::LoggingExt;
 use crate::proxy::handlers::handle_proxy_connection;
 use crate::{log_error, log_request, log_response};
@@ -105,6 +106,12 @@ fn handle_connection(
                 }
             }
 
+            let spa_config = if args.spa {
+                Some(SpaConfig::new())
+            } else {
+                None
+            };
+
             let result = handle_file_request(
                 client,
                 serve,
@@ -113,6 +120,7 @@ fn handle_connection(
                 args.zstd_level,
                 args.gzip_level,
                 &bypass_patterns,
+                spa_config.as_ref(),
             );
 
             // Add response logging based on file existence

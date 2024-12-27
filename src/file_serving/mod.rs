@@ -1,5 +1,6 @@
 pub mod handlers;
 mod path_utils;
+pub mod spa;
 
 use flate2::write::GzEncoder;
 use flate2::Compression as GzipCompression;
@@ -22,4 +23,5 @@ pub struct FileResponse {
     pub content: Vec<u8>,
     pub mime_type: String,
     pub compression: CompressionType,
+    pub headers: Vec<(String, String)>,
 }

@@ -26,6 +26,9 @@ pub struct Args {
 
     #[arg(short = 'i', long, action = clap::ArgAction::Append)]
     pub bypass: Vec<String>,
+
+    #[arg(long)]
+    pub spa: bool,
 }
 
 pub fn should_bypass_compression(uri: &str, bypass_patterns: &[Regex]) -> bool {

@@ -10,6 +10,8 @@ use crate::{
 use super::*;
 use std::net::TcpStream;
 
+use super::spa::SpaConfig;
+
 pub fn serve_file(
     base_dir: &Path,
     request_path: &str,
@@ -17,6 +19,7 @@ pub fn serve_file(
     zstd_level: i32,
     gzip_level: u32,
     bypass_patterns: &[Regex],
+    spa_config: Option<&SpaConfig>,
 ) -> io::Result<Option<FileResponse>> {
     log::debug!("Received request for path: {}", request_path);
     log::trace!("Base directory: {}", base_dir.display());
@@ -46,14 +49,48 @@ pub fn serve_file(
         }
     };
 
+    // Handle SPA routing
     let final_path = if path.is_dir() {
-        log::debug!("Path is a directory, looking for index.html");
-        path.join("index.html")
+        if let Some(spa_config) = spa_config {
+            path.join(&spa_config.index_path)
+        } else {
+            path.join("index.html")
+        }
+    } else if let Some(spa_config) = spa_config {
+        if !spa_config.is_static_file(&path) && !path.exists() {
+            // For SPA routes that don't exist as files, serve index.html
+            base_dir.join(&spa_config.index_path)
+        } else {
+            path
+        }
     } else {
         path
     };
 
     log::debug!("Final resolved path: {}", final_path.display());
+
+    // Set appropriate cache headers based on whether it's index.html
+    let is_index = final_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_lowercase() == "index.html")
+        .unwrap_or(false);
+
+    let cache_headers = if is_index {
+        vec![
+            (
+                "Cache-Control".to_string(),
+                "no-cache, no-store, must-revalidate".to_string(),
+            ),
+            ("Pragma".to_string(), "no-cache".to_string()),
+            ("Expires".to_string(), "0".to_string()),
+        ]
+    } else {
+        vec![(
+            "Cache-Control".to_string(),
+            "public, max-age=31536000".to_string(),
+        )]
+    };
 
     // First try to find any pre-compressed version
     if let Some(precompressed) = find_precompressed(base_dir, &final_path, accepted_compression)? {
@@ -72,6 +109,7 @@ pub fn serve_file(
             content,
             mime_type,
             compression: precompressed.compression,
+            headers: cache_headers,
         }));
     }
 
@@ -117,6 +155,7 @@ pub fn serve_file(
         content: final_content,
         mime_type,
         compression,
+        headers: cache_headers,
     }))
 }
 
@@ -128,6 +167,7 @@ pub fn handle_file_request(
     zstd_level: i32,
     gzip_level: u32,
     bypass_patterns: &[Regex],
+    spa_config: Option<&SpaConfig>,
 ) -> io::Result<()> {
     let accept_encoding = headers
         .iter()
@@ -146,6 +186,7 @@ pub fn handle_file_request(
         zstd_level,
         gzip_level,
         bypass_patterns, // Pass bypass_patterns
+        spa_config,
     )? {
         Some(response) => {
             client.write_all(b"HTTP/1.1 200 OK\r\n")?;
@@ -160,6 +201,16 @@ pub fn handle_file_request(
                 }
                 CompressionType::None => {}
             }
+
+            // Write cache and security headers
+            for (key, value) in response.headers {
+                client.write_all(format!("{}: {}\r\n", key, value).as_bytes())?;
+            }
+
+            // Add security headers
+            client.write_all(b"X-Content-Type-Options: nosniff\r\n")?;
+            client.write_all(b"X-Frame-Options: DENY\r\n")?;
+            client.write_all(b"X-XSS-Protection: 1; mode=block\r\n")?;
 
             client
                 .write_all(format!("Content-Length: {}\r\n", response.content.len()).as_bytes())?;
