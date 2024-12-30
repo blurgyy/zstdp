@@ -85,11 +85,11 @@ fn handle_connection(
     let result = match (&args.forward, &args.serve) {
         (Some(forward), None) => forward.log_operation("proxy_request", || {
             let request_time = Instant::now();
-            let result = handle_proxy_connection(client, forward, args.zstd_level, bypass_patterns);
+            let (result, original_size, final_size) = handle_proxy_connection(client, forward, args.zstd_level, bypass_patterns)?;
 
             match &result {
-                Ok(_) => log_response!("200 OK", request_time.elapsed()),
-                Err(_) => log_response!("500 Internal Server Error", request_time.elapsed()),
+                Ok(_) => log_response!("200 OK", request_time.elapsed(), original_size, final_size),
+                Err(_) => log_response!("500 Internal Server Error", request_time.elapsed(), original_size, final_size),
             }
 
             result
@@ -99,7 +99,6 @@ fn handle_connection(
             let mut first_line = String::new();
             buf_reader.read_line(&mut first_line)?;
 
-            // Add request logging
             log_request!(&first_line);
             let request_time = Instant::now();
 
@@ -133,20 +132,19 @@ fn handle_connection(
                 spa_config.as_ref(),
             );
 
-            // Add response logging based on file existence
-            match &result {
-                Ok(_) => {
-                    log_response!("200 OK", request_time.elapsed());
+            match result {
+                Ok((original_size, final_size)) => {
+                    log_response!("200 OK", request_time.elapsed(), original_size, final_size);
                     Ok(())
                 }
                 Err(e) => match e.kind() {
                     ErrorKind::NotFound => {
-                        log_response!("404 Not Found", request_time.elapsed());
+                        log_response!("404 Not Found", request_time.elapsed(), 0, 0);
                         Ok(())
                     }
                     _ => {
-                        log_response!("500 Internal Server Error", request_time.elapsed());
-                        result
+                        log_response!("500 Internal Server Error", request_time.elapsed(), 0, 0);
+                        Err(e)
                     }
                 },
             }

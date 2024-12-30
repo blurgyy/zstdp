@@ -95,7 +95,8 @@ pub fn find_precompressed(
 
     // Check each possible compression type
     for (compression_type, extension) in possible_compressions {
-        let compressed_path = base_dir.join(Path::new(&format!("{}{}", rel_path.display(), extension)));
+        let compressed_path =
+            base_dir.join(Path::new(&format!("{}{}", rel_path.display(), extension)));
         log::debug!("Checking compressed path: {}", compressed_path.display());
 
         if compressed_path.exists() {

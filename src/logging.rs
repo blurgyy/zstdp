@@ -10,10 +10,11 @@ pub fn setup_logging() {
         .parse_env("RUST_LOG") // Allow override through env var
         .format(|buf, record| {
             let timestamp = SystemTime::now();
+            let level = record.level();
 
             if atty::is(atty::Stream::Stderr) {
                 // Terminal output with colors
-                let level_color = match record.level() {
+                let level_color = match level {
                     log::Level::Error => "\x1B[31m", // Red
                     log::Level::Warn => "\x1B[33m",  // Yellow
                     log::Level::Info => "\x1B[32m",  // Green
@@ -21,27 +22,49 @@ pub fn setup_logging() {
                     log::Level::Trace => "\x1B[35m", // Magenta
                 };
 
-                writeln!(
-                    buf,
-                    "{}{:>5}\x1B[0m [{}] {} - {}:{}",
-                    level_color,
-                    record.level(),
-                    humantime::format_rfc3339_millis(timestamp),
-                    record.args(),
-                    record.file().unwrap_or("unknown"),
-                    record.line().unwrap_or(0)
-                )
+                // Only include file and line for debug/trace levels
+                if level <= log::Level::Debug {
+                    writeln!(
+                        buf,
+                        "{}{:>5}\x1B[0m [{}] {} - {}:{}",
+                        level_color,
+                        level,
+                        humantime::format_rfc3339_millis(timestamp),
+                        record.args(),
+                        record.file().unwrap_or("unknown"),
+                        record.line().unwrap_or(0)
+                    )
+                } else {
+                    writeln!(
+                        buf,
+                        "{}{:>5}\x1B[0m [{}] {}",
+                        level_color,
+                        level,
+                        humantime::format_rfc3339_millis(timestamp),
+                        record.args()
+                    )
+                }
             } else {
                 // Plain output for non-terminal
-                writeln!(
-                    buf,
-                    "{:>5} [{}] {} - {}:{}",
-                    record.level(),
-                    humantime::format_rfc3339_millis(timestamp),
-                    record.args(),
-                    record.file().unwrap_or("unknown"),
-                    record.line().unwrap_or(0)
-                )
+                if level <= log::Level::Debug {
+                    writeln!(
+                        buf,
+                        "{:>5} [{}] {} - {}:{}",
+                        level,
+                        humantime::format_rfc3339_millis(timestamp),
+                        record.args(),
+                        record.file().unwrap_or("unknown"),
+                        record.line().unwrap_or(0)
+                    )
+                } else {
+                    writeln!(
+                        buf,
+                        "{:>5} [{}] {}",
+                        level,
+                        humantime::format_rfc3339_millis(timestamp),
+                        record.args()
+                    )
+                }
             }
         })
         .init();
@@ -61,8 +84,14 @@ macro_rules! log_request {
 
 #[macro_export]
 macro_rules! log_response {
-    ($status:expr, $duration:expr) => {
-        log::info!("← {} ({:?})", $status, $duration)
+    ($status:expr, $duration:expr, $original_size:expr, $final_size:expr) => {
+        log::info!(
+            "← {} ({:?}) - Size: {} → {}",
+            $status,
+            $duration,
+            $original_size,
+            $final_size
+        )
     };
 }
 

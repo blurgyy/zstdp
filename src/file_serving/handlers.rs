@@ -20,7 +20,7 @@ pub fn serve_file(
     gzip_level: u32,
     bypass_patterns: &[Regex],
     spa_config: Option<&SpaConfig>,
-) -> io::Result<Option<FileResponse>> {
+) -> io::Result<Option<(FileResponse, usize)>> {  // Modified to return original size
     log::debug!("Received request for path: {}", request_path);
     log::trace!("Base directory: {}", base_dir.display());
     log::trace!(
@@ -49,7 +49,7 @@ pub fn serve_file(
         }
     };
 
-    // Handle SPA routing
+    // Rest of the path resolution logic...
     let final_path = if path.is_dir() {
         if let Some(spa_config) = spa_config {
             path.join(&spa_config.index_path)
@@ -58,7 +58,6 @@ pub fn serve_file(
         }
     } else if let Some(spa_config) = spa_config {
         if !spa_config.is_static_file(&path) && !path.exists() {
-            // For SPA routes that don't exist as files, serve index.html
             base_dir.join(&spa_config.index_path)
         } else {
             path
@@ -69,7 +68,7 @@ pub fn serve_file(
 
     log::debug!("Final resolved path: {}", final_path.display());
 
-    // Set appropriate cache headers based on whether it's index.html
+    // Set appropriate cache headers...
     let is_index = final_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -103,14 +102,18 @@ pub fn serve_file(
         let mut content = Vec::new();
         File::open(&precompressed.path)?.read_to_end(&mut content)?;
 
+        let original_size = fs::metadata(&final_path)?.len() as usize;
         let mime_type = from_path(&final_path).first_or_octet_stream().to_string();
 
-        return Ok(Some(FileResponse {
-            content,
-            mime_type,
-            compression: precompressed.compression,
-            headers: cache_headers,
-        }));
+        return Ok(Some((
+            FileResponse {
+                content,
+                mime_type,
+                compression: precompressed.compression,
+                headers: cache_headers,
+            },
+            original_size
+        )));
     }
 
     // If no pre-compressed file exists, check if original file exists
@@ -131,6 +134,7 @@ pub fn serve_file(
     // Read original file
     let mut content = Vec::new();
     File::open(&final_path)?.read_to_end(&mut content)?;
+    let original_size = content.len();
 
     let mime_type = from_path(&final_path).first_or_octet_stream().to_string();
 
@@ -151,12 +155,15 @@ pub fn serve_file(
         (content, CompressionType::None)
     };
 
-    Ok(Some(FileResponse {
-        content: final_content,
-        mime_type,
-        compression,
-        headers: cache_headers,
-    }))
+    Ok(Some((
+        FileResponse {
+            content: final_content,
+            mime_type,
+            compression,
+            headers: cache_headers,
+        },
+        original_size
+    )))
 }
 
 pub fn handle_file_request(
@@ -168,7 +175,7 @@ pub fn handle_file_request(
     gzip_level: u32,
     bypass_patterns: &[Regex],
     spa_config: Option<&SpaConfig>,
-) -> io::Result<()> {
+) -> io::Result<(usize, usize)> {  // Return (original_size, final_size)
     let accept_encoding = headers
         .iter()
         .find(|(k, _)| k.to_lowercase() == "accept-encoding")
@@ -185,10 +192,10 @@ pub fn handle_file_request(
         compression,
         zstd_level,
         gzip_level,
-        bypass_patterns, // Pass bypass_patterns
+        bypass_patterns,
         spa_config,
     )? {
-        Some(response) => {
+        Some((response, original_size)) => {
             client.write_all(b"HTTP/1.1 200 OK\r\n")?;
             client.write_all(format!("Content-Type: {}\r\n", response.mime_type).as_bytes())?;
 
@@ -216,7 +223,15 @@ pub fn handle_file_request(
                 .write_all(format!("Content-Length: {}\r\n", response.content.len()).as_bytes())?;
             client.write_all(b"\r\n")?;
             client.write_all(&response.content)?;
-            Ok(())
+
+            let final_size = response.content.len();
+            log::debug!(
+                "Response sizes - Original: {} bytes, Final: {} bytes",
+                original_size,
+                final_size
+            );
+
+            Ok((original_size, final_size))
         }
         None => {
             client.write_all(b"HTTP/1.1 404 Not Found\r\n")?;

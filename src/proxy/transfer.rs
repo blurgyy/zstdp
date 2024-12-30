@@ -5,9 +5,13 @@ use std::time::Instant;
 use crate::compression::determine_compression;
 use crate::log_request;
 
-pub fn forward_chunked_body<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> io::Result<()> {
+pub fn forward_chunked_body<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W
+) -> io::Result<(usize, usize)> {  // Return (bytes_read, bytes_written)
     let start_time = Instant::now();
-    let mut total_bytes = 0;
+    let mut total_bytes_read = 0;
+    let mut total_bytes_written = 0;
 
     loop {
         let mut size_buf = [0; 16];
@@ -24,6 +28,8 @@ pub fn forward_chunked_body<R: Read, W: Write>(reader: &mut R, writer: &mut W) -
             }
         }
 
+        total_bytes_read += size_bytes;
+        total_bytes_written += size_bytes;
         writer.write_all(&size_buf[..size_bytes])?;
 
         let size_str = std::str::from_utf8(&size_buf[..size_bytes - 2])
@@ -32,11 +38,16 @@ pub fn forward_chunked_body<R: Read, W: Write>(reader: &mut R, writer: &mut W) -
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         if size == 0 {
-            log::debug!("Reached end of chunked body, total bytes: {}", total_bytes);
+            log::debug!(
+                "Reached end of chunked body, total bytes read: {}, written: {}",
+                total_bytes_read,
+                total_bytes_written
+            );
             break;
         }
 
-        total_bytes += size;
+        total_bytes_read += size;
+        total_bytes_written += size;
         log::debug!("Forwarding chunk of size: {} bytes", size);
 
         io::copy(&mut reader.take(size as u64), writer)?;
@@ -45,20 +56,23 @@ pub fn forward_chunked_body<R: Read, W: Write>(reader: &mut R, writer: &mut W) -
         let mut crlf = [0; 2];
         reader.read_exact(&mut crlf)?;
         writer.write_all(&crlf)?;
+        total_bytes_read += 2;
+        total_bytes_written += 2;
     }
 
     // Forward the final CRLF after the last chunk
     let mut final_crlf = [0; 2];
     reader.read_exact(&mut final_crlf)?;
     writer.write_all(&final_crlf)?;
+    total_bytes_read += 2;
+    total_bytes_written += 2;
 
     log::debug!(
-        "Completed chunked body transfer: {} bytes in {:?}",
-        total_bytes,
+        "Completed chunked body transfer in {:?}",
         start_time.elapsed()
     );
 
-    Ok(())
+    Ok((total_bytes_read, total_bytes_written))
 }
 
 pub fn forward_request(

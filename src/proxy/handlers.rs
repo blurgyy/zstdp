@@ -15,7 +15,7 @@ pub fn handle_proxy_connection(
     forward: &str,
     zstd_level: i32,
     bypass_patterns: Arc<Vec<Regex>>,
-) -> io::Result<()> {
+) -> io::Result<(io::Result<()>, usize, usize)> {  // Return original and final sizes
     let start_time = Instant::now();
     log::debug!("→ New proxy connection to {}", forward);
 
@@ -25,12 +25,10 @@ pub fn handle_proxy_connection(
     })?;
     log::debug!("Connected to backend server in {:?}", start_time.elapsed());
 
-    // Forward request to server
     let (_headers, supports_zstd, uri) = forward.log_operation("forward_request", || {
         forward_request(&mut client, &mut server.try_clone()?)
     })?;
 
-    // Check if request should bypass compression
     let should_bypass = should_bypass_compression(&uri, &bypass_patterns);
     if should_bypass {
         log::debug!("URI '{}' matches bypass pattern, skipping compression", uri);
@@ -50,7 +48,6 @@ pub fn handle_proxy_connection(
     let (status_line, headers) = parse_response_headers(&response_headers_str);
     log::debug!("← {} from backend", status_line);
 
-    // Check compression and encoding properties
     let current_encoding = headers
         .iter()
         .find(|(k, _)| k.to_lowercase() == "content-encoding")
@@ -73,50 +70,67 @@ pub fn handle_proxy_connection(
         content_length
     );
 
-    if is_already_compressed || should_bypass {
+    let mut original_size = 0;
+    let mut final_size = 0;
+
+    let result = if is_already_compressed || should_bypass {
         forward.log_operation("forward_compressed", || {
-            // Forward headers and body as-is
             client.write_all(&response_headers)?;
 
             if is_chunked {
-                forward_chunked_body(&mut server.try_clone()?, &mut client)
+                let (bytes_read, bytes_written) = forward_chunked_body(&mut server.try_clone()?, &mut client)?;
+                original_size = bytes_read;
+                final_size = bytes_written;
+                Ok(())
             } else if let Some(length) = content_length {
+                original_size = length;
+                final_size = length;
                 io::copy(&mut server.take(length as u64), &mut client)?;
                 Ok(())
             } else {
-                io::copy(&mut server, &mut client)?;
+                let bytes = io::copy(&mut server, &mut client)?;
+                original_size = bytes as usize;
+                final_size = bytes as usize;
                 Ok(())
             }
-        })?;
+        })
     } else {
         forward.log_operation("forward_with_compression", || {
+            let mut buffer = Vec::new();
+
+            // Read the entire response body
+            if is_chunked {
+                let (bytes_read, _) = forward_chunked_body(&mut server.try_clone()?, &mut buffer)?;
+                original_size = bytes_read;
+            } else if let Some(length) = content_length {
+                io::copy(&mut server.take(length as u64), &mut buffer)?;
+                original_size = length;
+            } else {
+                let bytes = io::copy(&mut server, &mut buffer)?;
+                original_size = bytes as usize;
+            }
+
             let mut modified_headers = headers.clone();
+            modified_headers.retain(|(k, _)| k.to_lowercase() != "content-length");
+
             if supports_zstd {
-                modified_headers.retain(|(k, _)| k.to_lowercase() != "content-length");
                 modified_headers.push(("Content-Encoding".to_string(), "zstd".to_string()));
                 modified_headers.push(("Transfer-Encoding".to_string(), "chunked".to_string()));
-            }
 
-            // Send modified headers
-            client.write_all(format!("{}\r\n", status_line).as_bytes())?;
-            for (key, value) in &modified_headers {
-                client.write_all(format!("{}: {}\r\n", key, value).as_bytes())?;
-            }
-            client.write_all(b"\r\n")?;
-
-            if supports_zstd {
+                // Compress the body
                 let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level)?;
-                if is_chunked {
-                    forward_chunked_body(&mut server.try_clone()?, &mut encoder)?;
-                } else if let Some(length) = content_length {
-                    io::copy(&mut server.take(length as u64), &mut encoder)?;
-                } else {
-                    io::copy(&mut server, &mut encoder)?;
-                }
-
+                encoder.write_all(&buffer)?;
                 let compressed = encoder.finish()?;
-                log::debug!("Compressed response to {} bytes", compressed.len());
+                final_size = compressed.len();
 
+                // Send headers
+                client.write_all(format!("{}\r\n", status_line).as_bytes())?;
+                for (key, value) in &modified_headers {
+                    client.write_all(format!("{}: {}\r\n", key, value).as_bytes())?;
+                }
+                client.write_all(b"\r\n")?;
+
+                // Send compressed body
                 let mut chunked_writer = BufWriter::new(&mut client);
                 for chunk in compressed.chunks(8192) {
                     write!(chunked_writer, "{:X}\r\n", chunk.len())?;
@@ -126,20 +140,23 @@ pub fn handle_proxy_connection(
                 write!(chunked_writer, "0\r\n\r\n")?;
                 chunked_writer.flush()
             } else {
-                if is_chunked {
-                    forward_chunked_body(&mut server.try_clone()?, &mut client)
-                } else if let Some(length) = content_length {
-                    io::copy(&mut server.take(length as u64), &mut client)?;
-                    Ok(())
-                } else {
-                    io::copy(&mut server, &mut client)?;
-                    Ok(())
+                // No compression, forward as-is
+                final_size = buffer.len();
+
+                // Send headers with content length
+                client.write_all(format!("{}\r\n", status_line).as_bytes())?;
+                client.write_all(format!("Content-Length: {}\r\n", buffer.len()).as_bytes())?;
+                for (key, value) in &modified_headers {
+                    client.write_all(format!("{}: {}\r\n", key, value).as_bytes())?;
                 }
+                client.write_all(b"\r\n")?;
+
+                // Send body
+                client.write_all(&buffer)?;
+                Ok(())
             }
-        })?;
-    }
+        })
+    };
 
-    log::debug!("← Completed proxy request in {:?}", start_time.elapsed());
-
-    Ok(())
+    Ok((result, original_size, final_size))
 }
