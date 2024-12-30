@@ -22,8 +22,17 @@ pub fn setup_logging() {
                     log::Level::Trace => "\x1B[35m", // Magenta
                 };
 
-                // Only include file and line for debug/trace levels
-                if level <= log::Level::Debug {
+                // Include file and line only for debug and trace levels
+                if level >= log::Level::Info {
+                    writeln!(
+                        buf,
+                        "{}{:>5}\x1B[0m [{}] {}",
+                        level_color,
+                        level,
+                        humantime::format_rfc3339_millis(timestamp),
+                        record.args()
+                    )
+                } else {
                     writeln!(
                         buf,
                         "{}{:>5}\x1B[0m [{}] {} - {}:{}",
@@ -34,19 +43,18 @@ pub fn setup_logging() {
                         record.file().unwrap_or("unknown"),
                         record.line().unwrap_or(0)
                     )
-                } else {
+                }
+            } else {
+                // Plain output for non-terminal
+                if level >= log::Level::Info {
                     writeln!(
                         buf,
-                        "{}{:>5}\x1B[0m [{}] {}",
-                        level_color,
+                        "{:>5} [{}] {}",
                         level,
                         humantime::format_rfc3339_millis(timestamp),
                         record.args()
                     )
-                }
-            } else {
-                // Plain output for non-terminal
-                if level <= log::Level::Debug {
+                } else {
                     writeln!(
                         buf,
                         "{:>5} [{}] {} - {}:{}",
@@ -55,14 +63,6 @@ pub fn setup_logging() {
                         record.args(),
                         record.file().unwrap_or("unknown"),
                         record.line().unwrap_or(0)
-                    )
-                } else {
-                    writeln!(
-                        buf,
-                        "{:>5} [{}] {}",
-                        level,
-                        humantime::format_rfc3339_millis(timestamp),
-                        record.args()
                     )
                 }
             }
