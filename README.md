@@ -27,6 +27,7 @@ compression support (Zstd and Gzip) and various optimization features.
   - Chunked transfer encoding support
   - Header manipulation and forwarding
   - Custom compression decisions based on content
+  - WebSocket connection pass-through (uncompressed)
 
 - **General Features**:
   - Auto-detected colorized logging with configurable levels
@@ -79,38 +80,11 @@ Options:
   -V, --version             Print version
 ```
 
-### Examples
+## WebSocket Support
 
-1. Run as a proxy server with custom compression levels:
-   ```bash
-   zstdp -b 0.0.0.0 -p 8080 -f backend:3000 -z 5 -g 7
-   ```
-
-2. Run as a file server with SPA support:
-   ```bash
-   zstdp -s ./dist --spa
-   ```
-
-3. Use compression bypass patterns:
-   ```bash
-   zstdp -s ./static -i "\\.jpg$" -i "\\.png$"
-   ```
-
-### Environment Variables
-
-- `RUST_LOG`: Configure logging level (error, warn, info, debug, trace)
-  ```bash
-  RUST_LOG=debug zstdp -s ./static
-  ```
-
-## Compression Details
-
-The server supports both Zstd and Gzip compression with the following behavior:
-
-1. Uses pre-compressed files if available
-2. Falls back to Zstd or Gzip based on client support
-3. Applies bypass patterns to skip compression for specified files
-4. Uses configured compression levels
+WebSocket connections are automatically detected and passed through the proxy without compression.
+This ensures compatibility with WebSocket-based applications while maintaining compression benefits
+for regular HTTP traffic.  See `websocket_test/` directory for testing examples.
 
 ## Security Features
 
