@@ -20,7 +20,8 @@ pub fn serve_file(
     gzip_level: u32,
     bypass_patterns: &[Regex],
     spa_config: Option<&SpaConfig>,
-) -> io::Result<Option<(FileResponse, usize)>> {  // Modified to return original size
+) -> io::Result<Option<(FileResponse, usize)>> {
+    // Modified to return original size
     log::debug!("Received request for path: {}", request_path);
     log::trace!("Base directory: {}", base_dir.display());
     log::trace!(
@@ -112,7 +113,7 @@ pub fn serve_file(
                 compression: precompressed.compression,
                 headers: cache_headers,
             },
-            original_size
+            original_size,
         )));
     }
 
@@ -162,7 +163,7 @@ pub fn serve_file(
             compression,
             headers: cache_headers,
         },
-        original_size
+        original_size,
     )))
 }
 
@@ -175,7 +176,8 @@ pub fn handle_file_request(
     gzip_level: u32,
     bypass_patterns: &[Regex],
     spa_config: Option<&SpaConfig>,
-) -> io::Result<(usize, usize)> {  // Return (original_size, final_size)
+) -> io::Result<(usize, usize)> {
+    // Return (original_size, final_size)
     let accept_encoding = headers
         .iter()
         .find(|(k, _)| k.to_lowercase() == "accept-encoding")

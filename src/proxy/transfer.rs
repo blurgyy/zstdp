@@ -1,5 +1,6 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
+use std::thread;
 use std::time::Instant;
 
 use crate::compression::determine_compression;
@@ -7,8 +8,9 @@ use crate::log_request;
 
 pub fn forward_chunked_body<R: Read, W: Write>(
     reader: &mut R,
-    writer: &mut W
-) -> io::Result<(usize, usize)> {  // Return (bytes_read, bytes_written)
+    writer: &mut W,
+) -> io::Result<(usize, usize)> {
+    // Return (bytes_read, bytes_written)
     let start_time = Instant::now();
     let mut total_bytes_read = 0;
     let mut total_bytes_written = 0;
@@ -142,4 +144,77 @@ pub fn forward_request(
     log::debug!("Completed request forwarding in {:?}", start_time.elapsed());
 
     Ok((headers, supports_zstd, uri))
+}
+
+pub fn tunnel_connection(mut client: TcpStream, mut server: TcpStream) -> io::Result<()> {
+    let client_addr = client.peer_addr()?;
+    log::debug!(
+        "Creating bi-directional tunnel for connection from {}",
+        client_addr
+    );
+
+    // Enable non-blocking mode for better performance
+    client.set_nonblocking(true)?;
+    server.set_nonblocking(true)?;
+
+    let mut client_to_server = client.try_clone()?;
+    let mut server_to_client = server.try_clone()?;
+
+    // Spawn a thread to handle client -> server
+    let client_handle = thread::spawn(move || {
+        let mut buffer = [0; 8192];
+        loop {
+            match client_to_server.read(&mut buffer) {
+                Ok(0) => break, // Connection closed
+                Ok(n) => {
+                    if let Err(err) = server.write_all(&buffer[..n]) {
+                        if err.kind() != io::ErrorKind::WouldBlock {
+                            log::error!("Error forwarding client to server: {}", err);
+                            break;
+                        }
+                    }
+                }
+                Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    // No data available, yield to other thread
+                    thread::sleep(std::time::Duration::from_millis(1));
+                    continue;
+                }
+                Err(err) => {
+                    log::error!("Error reading from client: {}", err);
+                    break;
+                }
+            }
+        }
+    });
+
+    // Handle server -> client in the main thread
+    let mut buffer = [0; 8192];
+    loop {
+        match server_to_client.read(&mut buffer) {
+            Ok(0) => break, // Connection closed
+            Ok(n) => {
+                if let Err(err) = client.write_all(&buffer[..n]) {
+                    if err.kind() != io::ErrorKind::WouldBlock {
+                        log::error!("Error forwarding server to client: {}", err);
+                        break;
+                    }
+                }
+            }
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                // No data available, yield to other thread
+                thread::sleep(std::time::Duration::from_millis(1));
+                continue;
+            }
+            Err(err) => {
+                log::error!("Error reading from server: {}", err);
+                break;
+            }
+        }
+    }
+
+    // Wait for the other direction to complete
+    let _ = client_handle.join();
+
+    log::debug!("Tunnel closed for connection from {}", client_addr);
+    Ok(())
 }

@@ -1,5 +1,6 @@
 use io::BufWriter;
 use regex::Regex;
+use transfer::tunnel_connection;
 
 use crate::args::should_bypass_compression;
 use crate::logging::LoggingExt;
@@ -15,7 +16,7 @@ pub fn handle_proxy_connection(
     forward: &str,
     zstd_level: i32,
     bypass_patterns: Arc<Vec<Regex>>,
-) -> io::Result<(io::Result<()>, usize, usize)> {  // Return original and final sizes
+) -> io::Result<(io::Result<()>, usize, usize)> {
     let start_time = Instant::now();
     log::debug!("→ New proxy connection to {}", forward);
 
@@ -25,9 +26,20 @@ pub fn handle_proxy_connection(
     })?;
     log::debug!("Connected to backend server in {:?}", start_time.elapsed());
 
-    let (_headers, supports_zstd, uri) = forward.log_operation("forward_request", || {
+    let (headers, supports_zstd, uri) = forward.log_operation("forward_request", || {
         forward_request(&mut client, &mut server.try_clone()?)
     })?;
+
+    // Check for WebSocket upgrade request
+    let is_websocket = headers
+        .iter()
+        .any(|(k, v)| k.to_lowercase() == "upgrade" && v.to_lowercase().contains("websocket"));
+
+    if is_websocket {
+        log::debug!("WebSocket upgrade request detected, creating tunnel");
+        // For WebSocket connections, create a direct tunnel
+        return Ok((tunnel_connection(client, server), 0, 0));
+    }
 
     let should_bypass = should_bypass_compression(&uri, &bypass_patterns);
     if should_bypass {
@@ -78,7 +90,8 @@ pub fn handle_proxy_connection(
             client.write_all(&response_headers)?;
 
             if is_chunked {
-                let (bytes_read, bytes_written) = forward_chunked_body(&mut server.try_clone()?, &mut client)?;
+                let (bytes_read, bytes_written) =
+                    forward_chunked_body(&mut server.try_clone()?, &mut client)?;
                 original_size = bytes_read;
                 final_size = bytes_written;
                 Ok(())

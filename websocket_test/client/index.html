@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+    <style>
+        body { margin: 20px; font-family: Arial, sans-serif; }
+        #messages { 
+            border: 1px solid #ccc; 
+            padding: 10px; 
+            height: 200px; 
+            overflow-y: auto;
+            margin-bottom: 10px;
+        }
+        .message { margin: 5px 0; }
+        .sent { color: blue; }
+        .received { color: green; }
+    </style>
+</head>
+<body>
+    <h2>WebSocket Test</h2>
+    <div id="status">Status: Disconnected</div>
+    <div id="messages"></div>
+    <input type="text" id="messageInput" placeholder="Type a message...">
+    <button onclick="sendMessage()">Send</button>
+
+    <script>
+        let ws;
+        const messagesDiv = document.getElementById('messages');
+        const statusDiv = document.getElementById('status');
+        const messageInput = document.getElementById('messageInput');
+
+        function connect() {
+            // Connect to the WebSocket server through our proxy
+            ws = new WebSocket('ws://localhost:9866');
+
+            ws.onopen = () => {
+                statusDiv.textContent = 'Status: Connected';
+                addMessage('System', 'Connected to server');
+            };
+
+            ws.onclose = () => {
+                statusDiv.textContent = 'Status: Disconnected';
+                addMessage('System', 'Disconnected from server');
+                // Try to reconnect after 3 seconds
+                setTimeout(connect, 3000);
+            };
+
+            ws.onmessage = (event) => {
+                addMessage('Received', event.data);
+            };
+
+            ws.onerror = (error) => {
+                addMessage('Error', 'WebSocket error occurred');
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        function sendMessage() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const message = messageInput.value;
+                if (message) {
+                    ws.send(message);
+                    addMessage('Sent', message);
+                    messageInput.value = '';
+                }
+            } else {
+                addMessage('Error', 'Not connected to server');
+            }
+        }
+
+        function addMessage(type, message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type.toLowerCase()}`;
+            messageDiv.textContent = `${type}: ${message}`;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        // Allow sending message with Enter key
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Start connection when page loads
+        connect();
+    </script>
+</body>
+</html>

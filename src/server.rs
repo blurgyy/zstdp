@@ -85,11 +85,17 @@ fn handle_connection(
     let result = match (&args.forward, &args.serve) {
         (Some(forward), None) => forward.log_operation("proxy_request", || {
             let request_time = Instant::now();
-            let (result, original_size, final_size) = handle_proxy_connection(client, forward, args.zstd_level, bypass_patterns)?;
+            let (result, original_size, final_size) =
+                handle_proxy_connection(client, forward, args.zstd_level, bypass_patterns)?;
 
             match &result {
                 Ok(_) => log_response!("200 OK", request_time.elapsed(), original_size, final_size),
-                Err(_) => log_response!("500 Internal Server Error", request_time.elapsed(), original_size, final_size),
+                Err(_) => log_response!(
+                    "500 Internal Server Error",
+                    request_time.elapsed(),
+                    original_size,
+                    final_size
+                ),
             }
 
             result
