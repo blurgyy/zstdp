@@ -24,7 +24,7 @@ with lib;
           port = mkOption {
             type = types.int;
             description = "Port to listen for requests";
-            example = "8766";
+            example = 8766;
           };
         };
       });
