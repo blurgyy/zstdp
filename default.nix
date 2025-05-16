@@ -1,4 +1,8 @@
-{ version, lib, rustPlatform }:
+{
+  version,
+  lib,
+  rustPlatform,
+}:
 
 rustPlatform.buildRustPackage {
   pname = "zstdp";
