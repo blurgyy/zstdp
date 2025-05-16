@@ -136,7 +136,7 @@ with lib;
               DynamicUser = true;
             };
             script = ''
-              zstdp -b ${svcConfig.bind.address} -p ${toString svcConfig.bind.port} \
+              exec zstdp -b ${svcConfig.bind.address} -p ${toString svcConfig.bind.port} \
                 ${
                   if svcConfig.forward != null then
                     "-f ${svcConfig.forward}"
