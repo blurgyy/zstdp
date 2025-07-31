@@ -1,0 +1,23 @@
+{
+    "mime-db": {
+        "cargoLocks": null,
+        "date": null,
+        "extract": null,
+        "name": "mime-db",
+        "passthru": null,
+        "pinned": false,
+        "src": {
+            "deepClone": false,
+            "fetchSubmodules": false,
+            "leaveDotGit": false,
+            "name": null,
+            "owner": "jshttp",
+            "repo": "mime-db",
+            "rev": "v1.54.0",
+            "sha256": "sha256-Enqn/OCntRPXbbfSclbwU8/ix8YRrYE4Ul1jBsehsF0=",
+            "sparseCheckout": [],
+            "type": "github"
+        },
+        "version": "v1.54.0"
+    }
+}
