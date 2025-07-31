@@ -38,14 +38,12 @@ pub fn determine_compression(accept_encoding: &str) -> AcceptedCompression {
     let encodings: Vec<&str> = lowercase_ae.split(',').map(|s| s.trim()).collect();
 
     let compression = AcceptedCompression {
-        supports_zstd: encodings.iter().any(|&e| e == "zstd"),
-        supports_gzip: encodings.iter().any(|&e| e == "gzip"),
+        supports_zstd: encodings.contains(&"zstd"),
+        supports_gzip: encodings.contains(&"gzip"),
     };
 
     log::debug!(
-        "Determined compression support from '{}': {}",
-        accept_encoding,
-        compression
+        "Determined compression support from '{accept_encoding}': {compression}"
     );
 
     compression

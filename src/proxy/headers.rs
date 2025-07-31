@@ -5,7 +5,7 @@ pub fn parse_response_headers(headers: &str) -> (&str, Vec<(String, String)>) {
 
     let mut lines = headers.lines();
     let status_line = lines.next().unwrap_or("");
-    debug!("Status line: {}", status_line);
+    debug!("Status line: {status_line}");
 
     let headers = lines
         .filter_map(|line| {
@@ -13,10 +13,10 @@ pub fn parse_response_headers(headers: &str) -> (&str, Vec<(String, String)>) {
             if parts.len() == 2 {
                 let key = parts[0].trim().to_lowercase();
                 let value = parts[1].trim().to_string();
-                debug!("Header: {} = {}", key, value);
+                debug!("Header: {key} = {value}");
                 Some((key, value))
             } else {
-                debug!("Skipping invalid header line: {}", line);
+                debug!("Skipping invalid header line: {line}");
                 None
             }
         })

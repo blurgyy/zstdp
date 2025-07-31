@@ -97,12 +97,12 @@ pub struct Args {
 }
 
 pub fn should_bypass_compression(uri: &str, bypass_patterns: &[Regex]) -> bool {
-    log::trace!("{}", uri);
+    log::trace!("{uri}");
     bypass_patterns.iter().any(|pattern| pattern.is_match(uri))
 }
 
 impl Args {
-    pub fn listen_addr(self: &Self) -> String {
+    pub fn listen_addr(&self) -> String {
         format!("{}:{}", self.bind, self.port)
     }
 }

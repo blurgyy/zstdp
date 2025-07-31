@@ -73,7 +73,7 @@ pub fn setup_logging() {
 #[macro_export]
 macro_rules! log_request {
     ($request:expr) => {{
-        let parts: Vec<&str> = $request.trim().split_whitespace().collect();
+        let parts: Vec<&str> = $request.split_whitespace().collect();
         if parts.len() >= 2 {
             log::info!("→ {} {}", parts[0], parts[1])
         } else {

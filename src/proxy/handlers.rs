@@ -20,10 +20,10 @@ pub fn handle_proxy_connection(
     mime_checker: Arc<MimeChecker>,
 ) -> io::Result<(io::Result<()>, usize, usize)> {
     let start_time = Instant::now();
-    log::debug!("→ New proxy connection to {}", forward);
+    log::debug!("→ New proxy connection to {forward}");
 
     let mut server = TcpStream::connect(forward).map_err(|e| {
-        log::error!("Failed to connect to backend {}: {}", forward, e);
+        log::error!("Failed to connect to backend {forward}: {e}");
         e
     })?;
     log::debug!("Connected to backend server in {:?}", start_time.elapsed());
@@ -45,7 +45,7 @@ pub fn handle_proxy_connection(
 
     let should_bypass = should_bypass_compression(&uri, &bypass_patterns);
     if should_bypass {
-        log::debug!("URI '{}' matches bypass pattern, skipping compression", uri);
+        log::debug!("URI '{uri}' matches bypass pattern, skipping compression");
     }
 
     // Read response headers
@@ -60,7 +60,7 @@ pub fn handle_proxy_connection(
 
     let response_headers_str = String::from_utf8_lossy(&response_headers).to_string();
     let (status_line, headers) = parse_response_headers(&response_headers_str);
-    log::debug!("← {} from backend", status_line);
+    log::debug!("← {status_line} from backend");
 
     let current_encoding = headers
         .iter()
@@ -89,17 +89,12 @@ pub fn handle_proxy_connection(
 
     if let Some(content_type) = content_type {
         log::debug!(
-            "Content-Type: {}, should compress: {}",
-            content_type,
-            should_compress_mime
+            "Content-Type: {content_type}, should compress: {should_compress_mime}"
         );
     }
 
     log::debug!(
-        "Response properties - compressed: {}, chunked: {}, length: {:?}",
-        is_already_compressed,
-        is_chunked,
-        content_length
+        "Response properties - compressed: {is_already_compressed}, chunked: {is_chunked}, length: {content_length:?}"
     );
 
     let mut original_size = 0;
@@ -157,9 +152,9 @@ pub fn handle_proxy_connection(
                 final_size = compressed.len();
 
                 // Send headers
-                client.write_all(format!("{}\r\n", status_line).as_bytes())?;
+                client.write_all(format!("{status_line}\r\n").as_bytes())?;
                 for (key, value) in &modified_headers {
-                    client.write_all(format!("{}: {}\r\n", key, value).as_bytes())?;
+                    client.write_all(format!("{key}: {value}\r\n").as_bytes())?;
                 }
                 client.write_all(b"\r\n")?;
 
@@ -177,10 +172,10 @@ pub fn handle_proxy_connection(
                 final_size = buffer.len();
 
                 // Send headers with content length
-                client.write_all(format!("{}\r\n", status_line).as_bytes())?;
+                client.write_all(format!("{status_line}\r\n").as_bytes())?;
                 client.write_all(format!("Content-Length: {}\r\n", buffer.len()).as_bytes())?;
                 for (key, value) in &modified_headers {
-                    client.write_all(format!("{}: {}\r\n", key, value).as_bytes())?;
+                    client.write_all(format!("{key}: {value}\r\n").as_bytes())?;
                 }
                 client.write_all(b"\r\n")?;
 

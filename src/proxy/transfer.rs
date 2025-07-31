@@ -41,16 +41,14 @@ pub fn forward_chunked_body<R: Read, W: Write>(
 
         if size == 0 {
             log::debug!(
-                "Reached end of chunked body, total bytes read: {}, written: {}",
-                total_bytes_read,
-                total_bytes_written
+                "Reached end of chunked body, total bytes read: {total_bytes_read}, written: {total_bytes_written}"
             );
             break;
         }
 
         total_bytes_read += size;
         total_bytes_written += size;
-        log::debug!("Forwarding chunk of size: {} bytes", size);
+        log::debug!("Forwarding chunk of size: {size} bytes");
 
         io::copy(&mut reader.take(size as u64), writer)?;
 
@@ -115,7 +113,7 @@ pub fn forward_request(
         if line.to_lowercase().starts_with("accept-encoding:") {
             let accept_encoding = line.split(':').map(|s| s.trim()).collect::<Vec<_>>()[1];
             supports_zstd = determine_compression(accept_encoding).supports_zstd;
-            log::debug!("Client accepts zstd compression: {}", supports_zstd);
+            log::debug!("Client accepts zstd compression: {supports_zstd}");
         }
 
         if !line.to_lowercase().starts_with("host:") {
@@ -137,7 +135,7 @@ pub fn forward_request(
         .find(|(k, _)| k.to_lowercase() == "content-length")
         .and_then(|(_, v)| v.parse::<u64>().ok())
     {
-        log::debug!("Forwarding request body of {} bytes", length);
+        log::debug!("Forwarding request body of {length} bytes");
         io::copy(&mut buf_reader.take(length), server)?;
     }
 
@@ -149,8 +147,7 @@ pub fn forward_request(
 pub fn tunnel_connection(mut client: TcpStream, mut server: TcpStream) -> io::Result<()> {
     let client_addr = client.peer_addr()?;
     log::debug!(
-        "Creating bi-directional tunnel for connection from {}",
-        client_addr
+        "Creating bi-directional tunnel for connection from {client_addr}"
     );
 
     // Enable non-blocking mode for better performance
@@ -169,7 +166,7 @@ pub fn tunnel_connection(mut client: TcpStream, mut server: TcpStream) -> io::Re
                 Ok(n) => {
                     if let Err(err) = server.write_all(&buffer[..n]) {
                         if err.kind() != io::ErrorKind::WouldBlock {
-                            log::error!("Error forwarding client to server: {}", err);
+                            log::error!("Error forwarding client to server: {err}");
                             break;
                         }
                     }
@@ -180,7 +177,7 @@ pub fn tunnel_connection(mut client: TcpStream, mut server: TcpStream) -> io::Re
                     continue;
                 }
                 Err(err) => {
-                    log::error!("Error reading from client: {}", err);
+                    log::error!("Error reading from client: {err}");
                     break;
                 }
             }
@@ -195,7 +192,7 @@ pub fn tunnel_connection(mut client: TcpStream, mut server: TcpStream) -> io::Re
             Ok(n) => {
                 if let Err(err) = client.write_all(&buffer[..n]) {
                     if err.kind() != io::ErrorKind::WouldBlock {
-                        log::error!("Error forwarding server to client: {}", err);
+                        log::error!("Error forwarding server to client: {err}");
                         break;
                     }
                 }
@@ -206,7 +203,7 @@ pub fn tunnel_connection(mut client: TcpStream, mut server: TcpStream) -> io::Re
                 continue;
             }
             Err(err) => {
-                log::error!("Error reading from server: {}", err);
+                log::error!("Error reading from server: {err}");
                 break;
             }
         }
@@ -215,6 +212,6 @@ pub fn tunnel_connection(mut client: TcpStream, mut server: TcpStream) -> io::Re
     // Wait for the other direction to complete
     let _ = client_handle.join();
 
-    log::debug!("Tunnel closed for connection from {}", client_addr);
+    log::debug!("Tunnel closed for connection from {client_addr}");
     Ok(())
 }

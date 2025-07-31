@@ -25,7 +25,7 @@ pub fn serve_file(
     mime_checker: &MimeChecker,
 ) -> io::Result<Option<(FileResponse, usize)>> {
     // Modified to return original size
-    log::debug!("Received request for path: {}", request_path);
+    log::debug!("Received request for path: {request_path}");
     log::trace!("Base directory: {}", base_dir.display());
     log::trace!(
         "Accepted compression - zstd: {}, gzip: {}",
@@ -37,8 +37,7 @@ pub fn serve_file(
     let should_bypass = should_bypass_compression(request_path, bypass_patterns);
     if should_bypass {
         log::debug!(
-            "Path '{}' matches bypass pattern, skipping compression",
-            request_path
+            "Path '{request_path}' matches bypass pattern, skipping compression"
         );
     }
 
@@ -100,9 +99,7 @@ pub fn serve_file(
     // Check if MIME type should be compressed
     let should_compress_mime = mime_checker.should_compress(&mime_type);
     log::debug!(
-        "MIME type: {}, should compress: {}",
-        mime_type,
-        should_compress_mime
+        "MIME type: {mime_type}, should compress: {should_compress_mime}"
     );
 
     // First try to find any pre-compressed version
@@ -153,12 +150,12 @@ pub fn serve_file(
     let (final_content, compression) = if should_bypass || !should_compress_mime {
         (content, CompressionType::None)
     } else if accepted_compression.supports_zstd {
-        log::debug!("Compressing with zstd level {}", zstd_level);
+        log::debug!("Compressing with zstd level {zstd_level}");
         let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level)?;
         encoder.write_all(&content)?;
         (encoder.finish()?, CompressionType::Zstd)
     } else if accepted_compression.supports_gzip {
-        log::debug!("Compressing with gzip level {}", gzip_level);
+        log::debug!("Compressing with gzip level {gzip_level}");
         let mut encoder = GzEncoder::new(Vec::new(), GzipCompression::new(gzip_level));
         encoder.write_all(&content)?;
         (encoder.finish()?, CompressionType::Gzip)
@@ -225,7 +222,7 @@ pub fn handle_file_request(
 
             // Write cache and security headers
             for (key, value) in response.headers {
-                client.write_all(format!("{}: {}\r\n", key, value).as_bytes())?;
+                client.write_all(format!("{key}: {value}\r\n").as_bytes())?;
             }
 
             // Add security headers
@@ -240,9 +237,7 @@ pub fn handle_file_request(
 
             let final_size = response.content.len();
             log::debug!(
-                "Response sizes - Original: {} bytes, Final: {} bytes",
-                original_size,
-                final_size
+                "Response sizes - Original: {original_size} bytes, Final: {final_size} bytes"
             );
 
             Ok((original_size, final_size))

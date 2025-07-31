@@ -34,28 +34,28 @@ fn main() -> io::Result<()> {
     if args.list_compressible || args.list_non_compressible || args.list_unspecified {
         let mime_config = MimeConfig::default();
         let mime_checker = MimeChecker::new(mime_config).unwrap_or_else(|e| {
-            eprintln!("Failed to initialize MIME database: {}", e);
+            eprintln!("Failed to initialize MIME database: {e}");
             process::exit(1);
         });
 
         if args.list_compressible {
             let types = mime_checker.get_compressible_types();
             for mime_type in types {
-                println!("{}", mime_type);
+                println!("{mime_type}");
             }
         }
 
         if args.list_non_compressible {
             let types = mime_checker.get_non_compressible_types();
             for mime_type in types {
-                println!("{}", mime_type);
+                println!("{mime_type}");
             }
         }
 
         if args.list_unspecified {
             let types = mime_checker.get_unspecified_types();
             for mime_type in types {
-                println!("{}", mime_type);
+                println!("{mime_type}");
             }
         }
 
@@ -117,7 +117,7 @@ fn main() -> io::Result<()> {
 
     if let Some(addr) = &args.forward {
         log::info!("  Mode: Proxy");
-        log::info!("  Forward address: {}", addr);
+        log::info!("  Forward address: {addr}");
         log::info!("  Zstd compression level: {}", args.zstd_level);
     } else if let Some(dir) = &args.serve {
         log::info!("  Mode: File Server");

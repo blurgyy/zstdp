@@ -29,7 +29,7 @@ pub fn start_server(args: Args, mime_config: MimeConfig) -> io::Result<()> {
     };
 
     match (&args.forward, &args.serve) {
-        (Some(addr), None) => log::info!("Mode: Proxy → {}", addr),
+        (Some(addr), None) => log::info!("Mode: Proxy → {addr}"),
         (None, Some(dir)) => log::info!("Mode: File Server → {}", dir.display()),
         _ => unreachable!(),
     }
@@ -48,7 +48,7 @@ pub fn start_server(args: Args, mime_config: MimeConfig) -> io::Result<()> {
             Err(e) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!("Invalid bypass pattern: {}", e),
+                    format!("Invalid bypass pattern: {e}"),
                 ));
             }
         }
@@ -57,7 +57,7 @@ pub fn start_server(args: Args, mime_config: MimeConfig) -> io::Result<()> {
     let mime_checker = Arc::new(MimeChecker::new(mime_config).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("Failed to initialize MIME checker: {}", e),
+            format!("Failed to initialize MIME checker: {e}"),
         )
     })?);
 
@@ -91,7 +91,7 @@ fn handle_connection(
 ) -> io::Result<()> {
     let start_time = Instant::now();
     let peer_addr = client.peer_addr()?;
-    log::debug!("→ New connection from {}", peer_addr);
+    log::debug!("→ New connection from {peer_addr}");
 
     let result = match (&args.forward, &args.serve) {
         (Some(forward), None) => forward.log_operation("proxy_request", || {
