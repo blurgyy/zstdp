@@ -10,10 +10,11 @@ use crate::args::Args;
 use crate::file_serving::handlers::handle_file_request;
 use crate::file_serving::spa::SpaConfig;
 use crate::logging::LoggingExt;
+use crate::mime::{MimeChecker, MimeConfig};
 use crate::proxy::handlers::handle_proxy_connection;
 use crate::{log_error, log_request, log_response};
 
-pub fn start_server(args: Args) -> io::Result<()> {
+pub fn start_server(args: Args, mime_config: MimeConfig) -> io::Result<()> {
     let listener = TcpListener::bind(args.listen_addr())?;
     log::info!("Server started on: {}", args.listen_addr());
 
@@ -53,13 +54,22 @@ pub fn start_server(args: Args) -> io::Result<()> {
         }
     };
 
+    let mime_checker = Arc::new(MimeChecker::new(mime_config).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to initialize MIME checker: {}", e),
+        )
+    })?);
+
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 let args = args.clone();
                 let bypass_patterns = Arc::clone(&bypass_patterns);
+                let mime_checker = Arc::clone(&mime_checker);
                 thread::spawn(move || {
-                    if let Err(e) = handle_connection(stream, &args, bypass_patterns) {
+                    if let Err(e) = handle_connection(stream, &args, bypass_patterns, mime_checker)
+                    {
                         log_error!(e, "Connection handler failed");
                     }
                 });
@@ -77,6 +87,7 @@ fn handle_connection(
     client: TcpStream,
     args: &Args,
     bypass_patterns: Arc<Vec<Regex>>,
+    mime_checker: Arc<MimeChecker>,
 ) -> io::Result<()> {
     let start_time = Instant::now();
     let peer_addr = client.peer_addr()?;
@@ -85,8 +96,13 @@ fn handle_connection(
     let result = match (&args.forward, &args.serve) {
         (Some(forward), None) => forward.log_operation("proxy_request", || {
             let request_time = Instant::now();
-            let (result, original_size, final_size) =
-                handle_proxy_connection(client, forward, args.zstd_level, bypass_patterns)?;
+            let (result, original_size, final_size) = handle_proxy_connection(
+                client,
+                forward,
+                args.zstd_level,
+                bypass_patterns,
+                mime_checker,
+            )?;
 
             match &result {
                 Ok(_) => log_response!("200 OK", request_time.elapsed(), original_size, final_size),
@@ -136,6 +152,7 @@ fn handle_connection(
                 args.gzip_level,
                 &bypass_patterns,
                 spa_config.as_ref(),
+                &mime_checker,
             );
 
             match result {

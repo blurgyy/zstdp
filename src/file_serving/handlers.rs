@@ -1,10 +1,12 @@
 use path_utils::{find_precompressed, sanitize_path};
 use regex::Regex;
 use std::io::ErrorKind;
+use std::sync::Arc;
 
 use crate::{
     args::should_bypass_compression,
     compression::{determine_compression, AcceptedCompression},
+    mime::MimeChecker,
 };
 
 use super::*;
@@ -20,6 +22,7 @@ pub fn serve_file(
     gzip_level: u32,
     bypass_patterns: &[Regex],
     spa_config: Option<&SpaConfig>,
+    mime_checker: &MimeChecker,
 ) -> io::Result<Option<(FileResponse, usize)>> {
     // Modified to return original size
     log::debug!("Received request for path: {}", request_path);
@@ -92,6 +95,16 @@ pub fn serve_file(
         )]
     };
 
+    let mime_type = from_path(&final_path).first_or_octet_stream().to_string();
+
+    // Check if MIME type should be compressed
+    let should_compress_mime = mime_checker.should_compress(&mime_type);
+    log::debug!(
+        "MIME type: {}, should compress: {}",
+        mime_type,
+        should_compress_mime
+    );
+
     // First try to find any pre-compressed version
     if let Some(precompressed) = find_precompressed(base_dir, &final_path, accepted_compression)? {
         log::debug!(
@@ -104,7 +117,6 @@ pub fn serve_file(
         File::open(&precompressed.path)?.read_to_end(&mut content)?;
 
         let original_size = fs::metadata(&final_path)?.len() as usize;
-        let mime_type = from_path(&final_path).first_or_octet_stream().to_string();
 
         return Ok(Some((
             FileResponse {
@@ -137,10 +149,8 @@ pub fn serve_file(
     File::open(&final_path)?.read_to_end(&mut content)?;
     let original_size = content.len();
 
-    let mime_type = from_path(&final_path).first_or_octet_stream().to_string();
-
     // Compress if needed
-    let (final_content, compression) = if should_bypass {
+    let (final_content, compression) = if should_bypass || !should_compress_mime {
         (content, CompressionType::None)
     } else if accepted_compression.supports_zstd {
         log::debug!("Compressing with zstd level {}", zstd_level);
@@ -176,6 +186,7 @@ pub fn handle_file_request(
     gzip_level: u32,
     bypass_patterns: &[Regex],
     spa_config: Option<&SpaConfig>,
+    mime_checker: &Arc<MimeChecker>,
 ) -> io::Result<(usize, usize)> {
     // Return (original_size, final_size)
     let accept_encoding = headers
@@ -196,6 +207,7 @@ pub fn handle_file_request(
         gzip_level,
         bypass_patterns,
         spa_config,
+        mime_checker,
     )? {
         Some((response, original_size)) => {
             client.write_all(b"HTTP/1.1 200 OK\r\n")?;

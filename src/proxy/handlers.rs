@@ -4,6 +4,7 @@ use transfer::tunnel_connection;
 
 use crate::args::should_bypass_compression;
 use crate::logging::LoggingExt;
+use crate::mime::MimeChecker;
 
 use super::headers::parse_response_headers;
 use super::transfer::{forward_chunked_body, forward_request};
@@ -16,6 +17,7 @@ pub fn handle_proxy_connection(
     forward: &str,
     zstd_level: i32,
     bypass_patterns: Arc<Vec<Regex>>,
+    mime_checker: Arc<MimeChecker>,
 ) -> io::Result<(io::Result<()>, usize, usize)> {
     let start_time = Instant::now();
     log::debug!("→ New proxy connection to {}", forward);
@@ -75,6 +77,24 @@ pub fn handle_proxy_connection(
         .find(|(k, _)| k.to_lowercase() == "content-length")
         .and_then(|(_, v)| v.parse::<usize>().ok());
 
+    // Check MIME type for compression
+    let content_type = headers
+        .iter()
+        .find(|(k, _)| k.to_lowercase() == "content-type")
+        .map(|(_, v)| v.split(';').next().unwrap_or(v).trim());
+
+    let should_compress_mime = content_type
+        .map(|ct| mime_checker.should_compress(ct))
+        .unwrap_or(false);
+
+    if let Some(content_type) = content_type {
+        log::debug!(
+            "Content-Type: {}, should compress: {}",
+            content_type,
+            should_compress_mime
+        );
+    }
+
     log::debug!(
         "Response properties - compressed: {}, chunked: {}, length: {:?}",
         is_already_compressed,
@@ -85,7 +105,7 @@ pub fn handle_proxy_connection(
     let mut original_size = 0;
     let mut final_size = 0;
 
-    let result = if is_already_compressed || should_bypass {
+    let result = if is_already_compressed || should_bypass || !should_compress_mime {
         forward.log_operation("forward_compressed", || {
             client.write_all(&response_headers)?;
 

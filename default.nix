@@ -6,6 +6,8 @@
   clippy,
   cargo-edit,
   rustfmt,
+
+  mime-db,
 }:
 
 rustPlatform.buildRustPackage {
@@ -19,6 +21,8 @@ rustPlatform.buildRustPackage {
     cargo-edit
     rustfmt
   ];
+
+  MIME_DB_PATH = mime-db;
 
   shellHook = ''
     SHELL=$(grep "$USER:" /etc/passwd | awk -F: '{ print $NF }')
