@@ -146,9 +146,7 @@ pub fn forward_request(
 
 pub fn tunnel_connection(mut client: TcpStream, mut server: TcpStream) -> io::Result<()> {
     let client_addr = client.peer_addr()?;
-    log::debug!(
-        "Creating bi-directional tunnel for connection from {client_addr}"
-    );
+    log::debug!("Creating bi-directional tunnel for connection from {client_addr}");
 
     // Enable non-blocking mode for better performance
     client.set_nonblocking(true)?;

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-include!(concat!(env!("OUT_DIR"), "/mime_db.rs"));
+pub const MIME_DB_JSON: &str = include_str!(env!("MIME_DB_PATH"));
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MimeEntry {

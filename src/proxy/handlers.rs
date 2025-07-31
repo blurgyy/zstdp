@@ -88,9 +88,7 @@ pub fn handle_proxy_connection(
         .unwrap_or(false);
 
     if let Some(content_type) = content_type {
-        log::debug!(
-            "Content-Type: {content_type}, should compress: {should_compress_mime}"
-        );
+        log::debug!("Content-Type: {content_type}, should compress: {should_compress_mime}");
     }
 
     log::debug!(

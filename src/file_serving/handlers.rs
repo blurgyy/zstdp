@@ -36,9 +36,7 @@ pub fn serve_file(
     // Check if request should bypass compression
     let should_bypass = should_bypass_compression(request_path, bypass_patterns);
     if should_bypass {
-        log::debug!(
-            "Path '{request_path}' matches bypass pattern, skipping compression"
-        );
+        log::debug!("Path '{request_path}' matches bypass pattern, skipping compression");
     }
 
     let path = match sanitize_path(base_dir, request_path)? {
@@ -98,9 +96,7 @@ pub fn serve_file(
 
     // Check if MIME type should be compressed
     let should_compress_mime = mime_checker.should_compress(&mime_type);
-    log::debug!(
-        "MIME type: {mime_type}, should compress: {should_compress_mime}"
-    );
+    log::debug!("MIME type: {mime_type}, should compress: {should_compress_mime}");
 
     // First try to find any pre-compressed version
     if let Some(precompressed) = find_precompressed(base_dir, &final_path, accepted_compression)? {

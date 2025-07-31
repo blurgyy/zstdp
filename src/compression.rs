@@ -42,9 +42,7 @@ pub fn determine_compression(accept_encoding: &str) -> AcceptedCompression {
         supports_gzip: encodings.contains(&"gzip"),
     };
 
-    log::debug!(
-        "Determined compression support from '{accept_encoding}': {compression}"
-    );
+    log::debug!("Determined compression support from '{accept_encoding}': {compression}");
 
     compression
 }
