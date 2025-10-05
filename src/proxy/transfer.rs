@@ -144,72 +144,70 @@ pub fn forward_request(
     Ok((headers, supports_zstd, uri))
 }
 
-pub fn tunnel_connection(mut client: TcpStream, mut server: TcpStream) -> io::Result<()> {
+pub fn tunnel_connection(client: TcpStream, server: TcpStream) -> io::Result<()> {
+    use std::net::Shutdown;
+
     let client_addr = client.peer_addr()?;
     log::debug!("Creating bi-directional tunnel for connection from {client_addr}");
 
-    // Enable non-blocking mode for better performance
-    client.set_nonblocking(true)?;
-    server.set_nonblocking(true)?;
+    // Ensure blocking I/O; ignore errors if already blocking
+    let _ = client.set_nonblocking(false);
+    let _ = server.set_nonblocking(false);
 
-    let mut client_to_server = client.try_clone()?;
-    let mut server_to_client = server.try_clone()?;
+    // Clone ends for independent directions
+    let mut client_reader = client.try_clone()?;
+    let mut server_writer = server.try_clone()?;
 
-    // Spawn a thread to handle client -> server
-    let client_handle = thread::spawn(move || {
-        let mut buffer = [0; 8192];
-        loop {
-            match client_to_server.read(&mut buffer) {
-                Ok(0) => break, // Connection closed
-                Ok(n) => {
-                    if let Err(err) = server.write_all(&buffer[..n]) {
-                        if err.kind() != io::ErrorKind::WouldBlock {
-                            log::error!("Error forwarding client to server: {err}");
-                            break;
-                        }
+    // Client -> Server
+    let up = thread::spawn(move || -> io::Result<()> {
+        let res = io::copy(&mut client_reader, &mut server_writer);
+        // Half-close server write when client input ends
+        let _ = server_writer.shutdown(Shutdown::Write);
+        match res {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                match e.kind() {
+                    io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::UnexpectedEof => {
+                        log::debug!("Client->Server stream ended: {e}");
                     }
+                    _ => log::error!("Error forwarding client to server: {e}"),
                 }
-                Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    // No data available, yield to other thread
-                    thread::sleep(std::time::Duration::from_millis(1));
-                    continue;
-                }
-                Err(err) => {
-                    log::error!("Error reading from client: {err}");
-                    break;
-                }
+                Err(e)
             }
         }
     });
 
-    // Handle server -> client in the main thread
-    let mut buffer = [0; 8192];
-    loop {
-        match server_to_client.read(&mut buffer) {
-            Ok(0) => break, // Connection closed
-            Ok(n) => {
-                if let Err(err) = client.write_all(&buffer[..n]) {
-                    if err.kind() != io::ErrorKind::WouldBlock {
-                        log::error!("Error forwarding server to client: {err}");
-                        break;
-                    }
-                }
-            }
-            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
-                // No data available, yield to other thread
-                thread::sleep(std::time::Duration::from_millis(1));
-                continue;
-            }
-            Err(err) => {
-                log::error!("Error reading from server: {err}");
-                break;
-            }
+    // Server -> Client (run on current thread)
+    let res_down = {
+        let mut server_reader = server; // original server handle for reading
+        let mut client_writer = client; // original client handle for writing
+        let res = io::copy(&mut server_reader, &mut client_writer);
+        // Half-close client write when server input ends
+        let _ = client_writer.shutdown(Shutdown::Write);
+        res
+    };
+
+    // Wait for client->server to finish
+    let _ = up.join();
+
+    match res_down {
+        Ok(_) => {
+            log::debug!("Tunnel closed for connection from {client_addr}");
+            Ok(())
         }
+        Err(e) => match e.kind() {
+            io::ErrorKind::ConnectionReset
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::UnexpectedEof => {
+                log::debug!("Server->Client stream ended: {e}");
+                Ok(())
+            }
+            _ => {
+                log::error!("Error forwarding server to client: {e}");
+                Err(e)
+            }
+        },
     }
-
-    // Wait for the other direction to complete
-    let _ = client_handle.join();
-
-    log::debug!("Tunnel closed for connection from {client_addr}");
-    Ok(())
 }
