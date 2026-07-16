@@ -131,7 +131,7 @@ with lib;
             path = [ cfg.package ];
             wantedBy = [ "multi-user.target" ];
             serviceConfig = {
-              Restart = "on-failure";
+              Restart = "always";
               RestartSec = 5;
               DynamicUser = true;
             };
