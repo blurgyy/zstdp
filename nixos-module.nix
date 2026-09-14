@@ -6,6 +6,8 @@
 }:
 let
   cfg = config.services.zstdp;
+  # Per-service memory floor (MiB); see the serviceConfig note below.
+  memoryMinMiB = 64;
 in
 
 with lib;
@@ -117,6 +119,13 @@ with lib;
 
     environment.systemPackages = [ cfg.package ];
 
+    # The top rung of each service's memory floor (see serviceConfig): one
+    # slice for all zstdp services, protecting the sum of their floors.
+    systemd.slices.zstdp = {
+      description = "zstd proxies";
+      sliceConfig.MemoryMin = "${toString (memoryMinMiB * length (attrNames cfg.services))}M";
+    };
+
     systemd.services =
       let
         mkService =
@@ -134,6 +143,25 @@ with lib;
               Restart = "always";
               RestartSec = 5;
               DynamicUser = true;
+              # A conservative resource floor for a proxy that sits in front of
+              # something people are waiting on. `memory.min` is the RAM the
+              # kernel will not reclaim from this unit while any unprotected
+              # memory remains on the host, so a memory-hungry neighbour cannot
+              # page the proxy out from under its clients (observed 2026-09-14:
+              # a zstdp with 4 MiB resident and 84 MiB in swap, every request
+              # paying the fault-in). Sized well above a proxy's steady state,
+              # and a floor protects only what the unit actually uses. The
+              # kernel bounds a unit's effective `memory.min` by every ancestor's,
+              # so the unit lives in the slice below, whose own floor is the
+              # sum over services; a direct child of the root is bounded by
+              # nothing but itself, which completes the chain here.
+              MemoryMin = "${toString memoryMinMiB}M";
+              Slice = "zstdp.slice";
+              # Below the default so the OOM killer (and earlyoom) shed the
+              # memory hog before the proxy, but well above a control plane's
+              # own shield (-900 and lower), so this never outranks the service
+              # it fronts.
+              OOMScoreAdjust = -500;
             };
             script = ''
               exec zstdp -b ${svcConfig.bind.address} -p ${toString svcConfig.bind.port} \
