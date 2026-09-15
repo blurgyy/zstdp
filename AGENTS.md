@@ -7,6 +7,9 @@
 - **Format**: `cargo fmt` (format code according to Rust style guidelines)
 - **Check**: `cargo check` (fast compile check without building binaries)
 - **Important**: Always run `cargo clippy --fix --allow-dirty && cargo fmt` before committing changes
+- **Outside `nix develop`**: the build needs `MIME_DB_PATH` (the embedded MIME db) and
+  `JEMALLOC_OVERRIDE` (path to a prebuilt `libjemalloc.so`; otherwise `tikv-jemalloc-sys`
+  tries to compile jemalloc itself and needs autoconf + make). The nix dev shell exports both.
 
 ## Code Style Guidelines
 - **Language**: Rust 2021 edition

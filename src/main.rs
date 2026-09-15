@@ -16,6 +16,15 @@ use logging::setup_logging;
 use mime::{MimeChecker, MimeConfig};
 use server::start_server;
 
+// Allocator: jemalloc, not glibc malloc. Measured 2026-09-15: zstdp held
+// 100--470 MB of FREE memory per instance across the fleet, because glibc
+// keeps each dead connection thread's arena top chunk resident (whole-body
+// buffering raises the dynamic trim threshold, and `malloc_trim` never trims a
+// non-main arena's top). jemalloc purges unused pages on its own decay
+// schedule. The nix build links nixpkgs' prebuilt library (see default.nix).
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 fn load_mime_types_from_file(path: &std::path::Path) -> io::Result<Vec<String>> {
     let content = fs::read_to_string(path)?;
     Ok(content
