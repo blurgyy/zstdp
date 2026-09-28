@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::{
     args::should_bypass_compression,
-    compression::{determine_compression, AcceptedCompression},
+    compression::{compress, determine_compression, AcceptedCompression},
     mime::MimeChecker,
 };
 
@@ -143,21 +143,12 @@ pub fn serve_file(
     let original_size = content.len();
 
     // Compress if needed
-    let (final_content, compression) = if should_bypass || !should_compress_mime {
-        (content, CompressionType::None)
-    } else if accepted_compression.supports_zstd {
-        log::debug!("Compressing with zstd level {zstd_level}");
-        let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level)?;
-        encoder.write_all(&content)?;
-        (encoder.finish()?, CompressionType::Zstd)
-    } else if accepted_compression.supports_gzip {
-        log::debug!("Compressing with gzip level {gzip_level}");
-        let mut encoder = GzEncoder::new(Vec::new(), GzipCompression::new(gzip_level));
-        encoder.write_all(&content)?;
-        (encoder.finish()?, CompressionType::Gzip)
+    let compression = if should_bypass || !should_compress_mime {
+        CompressionType::None
     } else {
-        (content, CompressionType::None)
+        accepted_compression.preferred()
     };
+    let final_content = compress(content, compression, zstd_level, gzip_level)?;
 
     Ok(Some((
         FileResponse {
