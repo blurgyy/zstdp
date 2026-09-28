@@ -100,6 +100,7 @@ fn handle_connection(
                 client,
                 forward,
                 args.zstd_level,
+                args.gzip_level,
                 bypass_patterns,
                 mime_checker,
             )?;

@@ -3,19 +3,36 @@ use regex::Regex;
 use transfer::tunnel_connection;
 
 use crate::args::should_bypass_compression;
+use crate::compression::{compress, CompressionType};
 use crate::logging::LoggingExt;
 use crate::mime::MimeChecker;
 
-use super::headers::parse_response_headers;
-use super::transfer::{forward_chunked_body, forward_request};
+use super::headers::{add_vary_accept_encoding, parse_response_headers, status_code, weaken_etag};
+use super::transfer::{
+    forward_chunked_body, forward_request, read_chunked_body, read_response_head,
+};
 use super::*;
 use std::sync::Arc;
 use std::time::Instant;
+
+/// Writes a response head built from a status line and (possibly modified) headers.
+fn write_head<W: Write>(
+    writer: &mut W,
+    status_line: &str,
+    headers: &[(String, String)],
+) -> io::Result<()> {
+    writer.write_all(format!("{status_line}\r\n").as_bytes())?;
+    for (key, value) in headers {
+        writer.write_all(format!("{key}: {value}\r\n").as_bytes())?;
+    }
+    writer.write_all(b"\r\n")
+}
 
 pub fn handle_proxy_connection(
     mut client: TcpStream,
     forward: &str,
     zstd_level: i32,
+    gzip_level: u32,
     bypass_patterns: Arc<Vec<Regex>>,
     mime_checker: Arc<MimeChecker>,
 ) -> io::Result<(io::Result<()>, usize, usize)> {
@@ -28,12 +45,13 @@ pub fn handle_proxy_connection(
     })?;
     log::debug!("Connected to backend server in {:?}", start_time.elapsed());
 
-    let (headers, supports_zstd, uri) = forward.log_operation("forward_request", || {
+    let request = forward.log_operation("forward_request", || {
         forward_request(&mut client, &mut server.try_clone()?)
     })?;
 
     // Check for WebSocket upgrade request
-    let is_websocket = headers
+    let is_websocket = request
+        .headers
         .iter()
         .any(|(k, v)| k.to_lowercase() == "upgrade" && v.to_lowercase().contains("websocket"));
 
@@ -43,24 +61,38 @@ pub fn handle_proxy_connection(
         return Ok((tunnel_connection(client, server), 0, 0));
     }
 
-    let should_bypass = should_bypass_compression(&uri, &bypass_patterns);
+    let should_bypass = should_bypass_compression(&request.uri, &bypass_patterns);
     if should_bypass {
-        log::debug!("URI '{uri}' matches bypass pattern, skipping compression");
+        log::debug!(
+            "URI '{}' matches bypass pattern, skipping compression",
+            request.uri
+        );
     }
 
-    // Read response headers
-    let mut response_headers = Vec::new();
-    let mut byte = [0u8; 1];
-    while let Ok(1) = server.read(&mut byte) {
-        response_headers.push(byte[0]);
-        if response_headers.ends_with(b"\r\n\r\n") {
-            break;
+    // Read the final response head, relaying interim (1xx) responses as they come.
+    let response_headers = loop {
+        let head = read_response_head(&mut server)?;
+        let status_line = parse_response_headers(&String::from_utf8_lossy(&head))
+            .0
+            .to_string();
+        match status_code(&status_line) {
+            Some(101) => {
+                log::debug!("← {status_line} from backend, creating tunnel");
+                client.write_all(&head)?;
+                return Ok((tunnel_connection(client, server), 0, 0));
+            }
+            Some(100..=199) => {
+                log::debug!("← {status_line} (interim) from backend");
+                client.write_all(&head)?;
+            }
+            Some(_) | None => break head,
         }
-    }
+    };
 
     let response_headers_str = String::from_utf8_lossy(&response_headers).to_string();
     let (status_line, headers) = parse_response_headers(&response_headers_str);
     log::debug!("← {status_line} from backend");
+    let status = status_code(status_line);
 
     let current_encoding = headers
         .iter()
@@ -91,14 +123,44 @@ pub fn handle_proxy_connection(
         log::debug!("Content-Type: {content_type}, should compress: {should_compress_mime}");
     }
 
+    // Server-sent events must reach the client as they are produced: never buffer
+    // them for compression, whatever the MIME configuration says.
+    let is_event_stream =
+        content_type.is_some_and(|ct| ct.eq_ignore_ascii_case("text/event-stream"));
+
+    let is_eligible =
+        !is_already_compressed && !should_bypass && should_compress_mime && !is_event_stream;
+
+    // RFC 9112 6.3: responses to HEAD, and 204/304 responses, never carry content,
+    // whatever their Content-Length or Transfer-Encoding say.
+    let is_bodiless =
+        request.method.eq_ignore_ascii_case("HEAD") || matches!(status, Some(204 | 304));
+
+    let encoding = request.accepted_compression.preferred();
+
     log::debug!(
-        "Response properties - compressed: {is_already_compressed}, chunked: {is_chunked}, length: {content_length:?}"
+        "Response properties - compressed: {is_already_compressed}, chunked: {is_chunked}, length: {content_length:?}, eligible: {is_eligible}, bodiless: {is_bodiless}, encoding: {encoding}"
     );
 
     let mut original_size = 0;
     let mut final_size = 0;
 
-    let result = if is_already_compressed || should_bypass || !should_compress_mime {
+    let result = if is_bodiless {
+        forward.log_operation("forward_bodiless", || {
+            if is_eligible {
+                let mut modified_headers = headers.clone();
+                add_vary_accept_encoding(&mut modified_headers);
+                // A 304 stands in for the response zstdp would have encoded, so it
+                // carries that response's validator.
+                if status == Some(304) && encoding != CompressionType::None {
+                    weaken_etag(&mut modified_headers);
+                }
+                write_head(&mut client, status_line, &modified_headers)
+            } else {
+                client.write_all(&response_headers)
+            }
+        })
+    } else if !is_eligible {
         forward.log_operation("forward_compressed", || {
             client.write_all(&response_headers)?;
 
@@ -126,8 +188,7 @@ pub fn handle_proxy_connection(
 
             // Read the entire response body
             if is_chunked {
-                let (bytes_read, _) = forward_chunked_body(&mut server.try_clone()?, &mut buffer)?;
-                original_size = bytes_read;
+                original_size = read_chunked_body(&mut server, &mut buffer)?;
             } else if let Some(length) = content_length {
                 io::copy(&mut server.take(length as u64), &mut buffer)?;
                 original_size = length;
@@ -136,50 +197,49 @@ pub fn handle_proxy_connection(
                 original_size = bytes as usize;
             }
 
+            // The body is re-framed below, so upstream's framing no longer applies.
             let mut modified_headers = headers.clone();
-            modified_headers.retain(|(k, _)| k.to_lowercase() != "content-length");
+            modified_headers.retain(|(k, _)| {
+                k.to_lowercase() != "content-length" && k.to_lowercase() != "transfer-encoding"
+            });
+            add_vary_accept_encoding(&mut modified_headers);
 
-            if supports_zstd {
-                modified_headers.push(("Content-Encoding".to_string(), "zstd".to_string()));
-                modified_headers.push(("Transfer-Encoding".to_string(), "chunked".to_string()));
+            match encoding {
+                CompressionType::Zstd | CompressionType::Gzip => {
+                    let compressed = compress(buffer, encoding, zstd_level, gzip_level)?;
+                    final_size = compressed.len();
 
-                // Compress the body
-                let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level)?;
-                encoder.write_all(&buffer)?;
-                let compressed = encoder.finish()?;
-                final_size = compressed.len();
+                    weaken_etag(&mut modified_headers);
+                    modified_headers.push(("Content-Encoding".to_string(), encoding.to_string()));
+                    modified_headers.push(("Transfer-Encoding".to_string(), "chunked".to_string()));
+                    write_head(&mut client, status_line, &modified_headers)?;
 
-                // Send headers
-                client.write_all(format!("{status_line}\r\n").as_bytes())?;
-                for (key, value) in &modified_headers {
-                    client.write_all(format!("{key}: {value}\r\n").as_bytes())?;
+                    // Send compressed body
+                    let mut chunked_writer = BufWriter::new(&mut client);
+                    for chunk in compressed.chunks(8192) {
+                        write!(chunked_writer, "{:X}\r\n", chunk.len())?;
+                        chunked_writer.write_all(chunk)?;
+                        write!(chunked_writer, "\r\n")?;
+                    }
+                    write!(chunked_writer, "0\r\n\r\n")?;
+                    chunked_writer.flush()
                 }
-                client.write_all(b"\r\n")?;
+                CompressionType::None => {
+                    // No compression, forward as-is
+                    final_size = buffer.len();
 
-                // Send compressed body
-                let mut chunked_writer = BufWriter::new(&mut client);
-                for chunk in compressed.chunks(8192) {
-                    write!(chunked_writer, "{:X}\r\n", chunk.len())?;
-                    chunked_writer.write_all(chunk)?;
-                    write!(chunked_writer, "\r\n")?;
+                    // Send headers with content length
+                    client.write_all(format!("{status_line}\r\n").as_bytes())?;
+                    client.write_all(format!("Content-Length: {}\r\n", buffer.len()).as_bytes())?;
+                    for (key, value) in &modified_headers {
+                        client.write_all(format!("{key}: {value}\r\n").as_bytes())?;
+                    }
+                    client.write_all(b"\r\n")?;
+
+                    // Send body
+                    client.write_all(&buffer)?;
+                    Ok(())
                 }
-                write!(chunked_writer, "0\r\n\r\n")?;
-                chunked_writer.flush()
-            } else {
-                // No compression, forward as-is
-                final_size = buffer.len();
-
-                // Send headers with content length
-                client.write_all(format!("{status_line}\r\n").as_bytes())?;
-                client.write_all(format!("Content-Length: {}\r\n", buffer.len()).as_bytes())?;
-                for (key, value) in &modified_headers {
-                    client.write_all(format!("{key}: {value}\r\n").as_bytes())?;
-                }
-                client.write_all(b"\r\n")?;
-
-                // Send body
-                client.write_all(&buffer)?;
-                Ok(())
             }
         })
     };

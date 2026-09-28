@@ -127,7 +127,11 @@ fn main() -> io::Result<()> {
     if let Some(addr) = &args.forward {
         log::info!("  Mode: Proxy");
         log::info!("  Forward address: {addr}");
-        log::info!("  Zstd compression level: {}", args.zstd_level);
+        log::info!(
+            "  Compression levels - Zstd: {}, Gzip: {}",
+            args.zstd_level,
+            args.gzip_level
+        );
     } else if let Some(dir) = &args.serve {
         log::info!("  Mode: File Server");
         log::info!("  Serving directory: {}", dir.display());
